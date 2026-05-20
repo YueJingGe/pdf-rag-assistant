@@ -134,6 +134,10 @@
   gap: 6px;
 }
 
+.fileActions {
+  display: flex;
+  gap: 6px;
+}
 .input {
   flex: 1;
 }
@@ -177,20 +181,30 @@
   line-height: 1.7;
   word-break: break-word;
 
-  h1, h2, h3, h4, h5, h6 {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     margin-top: 12px;
     margin-bottom: 8px;
     font-weight: 600;
   }
 
-  h2 { font-size: 16px; }
-  h3 { font-size: 15px; }
+  h2 {
+    font-size: 16px;
+  }
+  h3 {
+    font-size: 15px;
+  }
 
   p {
     margin-bottom: 8px;
   }
 
-  ul, ol {
+  ul,
+  ol {
     padding-left: 20px;
     margin-bottom: 8px;
   }
@@ -206,7 +220,8 @@
     font-size: 13px;
   }
 
-  th, td {
+  th,
+  td {
     border: 1px solid #e8e8e8;
     padding: 8px 12px;
     text-align: left;
@@ -235,4 +250,54 @@
   strong {
     color: #1a1a1a;
   }
+}
+
+.userImageList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.userImage {
+  max-width: 200px;
+  max-height: 150px;
+  border-radius: 6px;
+  object-fit: cover;
+  cursor: pointer;
+  border: 1px solid #e8e8e8;
+}
+
+.filePreviewStrip {
+  padding: 8px 12px 0;
+}
+
+.filePreviewItem {
+  display: inline-flex;
+  align-items: center;
+  background: #f0f5ff;
+  border: 1px solid #adc6ff;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #1677ff;
+}
+
+.filePreviewName {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileAttachment {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 6px;
+  padding: 4px 10px;
+  background: #f0f5ff;
+  border: 1px solid #d6e4ff;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #1677ff;
 }

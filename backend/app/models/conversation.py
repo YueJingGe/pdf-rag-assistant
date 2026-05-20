@@ -26,6 +26,8 @@ class Message(Base):
     conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    file_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     citations: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     token_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

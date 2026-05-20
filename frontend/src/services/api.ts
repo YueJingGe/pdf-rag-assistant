@@ -37,6 +37,8 @@ export interface ChatMessage {
   id: number;
   role: 'user' | 'assistant';
   content: string;
+  images?: string[];
+  file_name?: string;
   citations?: Citation[];
   created_at: string;
 }
@@ -130,6 +132,12 @@ export const documentApi = {
     api.post(`/knowledge_bases/${kbId}/documents/batch_delete`, { doc_ids: docIds }),
 };
 
+export interface FileExtractResult {
+  file_id: string;
+  filename: string;
+  content: string;
+}
+
 export const chatApi = {
   listConversations: (kbId: number) =>
     api.get<ConversationInfo[]>(`/chat/conversations/${kbId}`),
@@ -137,6 +145,11 @@ export const chatApi = {
     api.get<ChatMessage[]>(`/chat/messages/${conversationId}`),
   deleteConversation: (conversationId: number) =>
     api.delete(`/chat/conversations/${conversationId}`),
+  uploadFile: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post<FileExtractResult>('/chat/upload-file', formData);
+  },
 };
 
 export const feedbackApi = {

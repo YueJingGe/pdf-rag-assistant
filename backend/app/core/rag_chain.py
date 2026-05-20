@@ -450,7 +450,8 @@ async def rag_stream(
 
 PLAIN_CHAT_SYSTEM_PROMPT = """你是一个智能AI助手，请用简洁、准确、友好的方式回答用户问题。
 使用Markdown格式化回复：标题分隔主题、列表展示要点、**加粗**关键信息。
-如果用户发送了图片，请仔细观察图片内容并结合用户问题进行回答。"""
+如果用户发送了图片，请仔细观察图片内容并结合用户问题进行回答。
+如果用户上传了文件，请仔细阅读文件内容并结合用户问题进行准确回答。"""
 
 
 def _get_chat_llm(streaming: bool = False) -> ChatOpenAI:
@@ -464,6 +465,7 @@ def _get_chat_llm(streaming: bool = False) -> ChatOpenAI:
         openai_api_key=settings.chat_api_key,
         openai_api_base=settings.chat_base_url,
         temperature=0.7,
+        max_tokens=4096,
         streaming=streaming,
     )
 
@@ -472,19 +474,26 @@ async def plain_chat_stream(
     question: str,
     chat_history: list[dict] | None = None,
     images: list[str] | None = None,
+    file_content: str | None = None,
 ) -> AsyncIterator[dict]:
-    """Streaming plain chat using Gemini 2.0 Flash (free multimodal).
+    """Streaming plain chat using GLM-4V-Flash (free multimodal from Zhipu AI).
 
     Args:
         question: User's text question.
         chat_history: Previous conversation messages.
-        images: List of image URLs or base64 data URIs (e.g., "data:image/png;base64,...").
+        images: List of image URLs or base64 data URIs.
+        file_content: Extracted text from uploaded file (via Zhipu file-extract API).
     """
     from langchain_core.messages import SystemMessage
 
     trimmed_history = _trim_chat_history(chat_history)
     messages = [SystemMessage(content=PLAIN_CHAT_SYSTEM_PROMPT)]
     messages.extend(_to_langchain_messages(trimmed_history))
+
+    # Build the user question text, prepending file content if provided
+    user_text = question
+    if file_content:
+        user_text = f"以下是用户上传的文件内容：\n\n{file_content}\n\n用户问题：{question}"
 
     # Build multimodal user message if images are provided
     if images:
@@ -494,10 +503,10 @@ async def plain_chat_stream(
                 "type": "image_url",
                 "image_url": {"url": image_url},
             })
-        content_parts.append({"type": "text", "text": question})
+        content_parts.append({"type": "text", "text": user_text})
         messages.append(HumanMessage(content=content_parts))
     else:
-        messages.append(HumanMessage(content=question))
+        messages.append(HumanMessage(content=user_text))
 
     llm = _get_chat_llm(streaming=True)
 

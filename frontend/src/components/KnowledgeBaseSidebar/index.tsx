@@ -1,17 +1,34 @@
-import React, { useEffect, useState } from 'react';
-import { List, Button, Input, Modal, Form, Typography, Tag, Space, Popconfirm, message } from 'antd';
-import { PlusOutlined, DeleteOutlined, DatabaseOutlined, StopOutlined, EditOutlined } from '@ant-design/icons';
-import { knowledgeBaseApi, type KnowledgeBase } from '../../services/api';
-import styles from './index.module.less';
+import React, { useEffect, useState } from "react";
+import {
+  List,
+  Button,
+  Input,
+  Modal,
+  Form,
+  Typography,
+  Tag,
+  Space,
+  Popconfirm,
+  message,
+} from "antd";
+import {
+  PlusOutlined,
+  DeleteOutlined,
+  DatabaseOutlined,
+  StopOutlined,
+  EditOutlined,
+} from "@ant-design/icons";
+import { knowledgeBaseApi, type KnowledgeBase } from "../../services/api";
+import styles from "./index.module.less";
 
 const NONE_KB: KnowledgeBase = {
   id: 0,
-  name: '无',
-  description: '不选择知识库',
-  permission: 'private',
+  name: "普通聊天",
+  description: "不选择知识库",
+  permission: "private",
   document_count: 0,
-  created_at: '',
-  updated_at: '',
+  created_at: "",
+  updated_at: "",
 };
 
 interface Props {
@@ -20,7 +37,11 @@ interface Props {
   refreshKey?: number;
 }
 
-export default function KnowledgeBaseSidebar({ selectedId, onSelect, refreshKey }: Props) {
+export default function KnowledgeBaseSidebar({
+  selectedId,
+  onSelect,
+  refreshKey,
+}: Props) {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -39,12 +60,14 @@ export default function KnowledgeBaseSidebar({ selectedId, onSelect, refreshKey 
     }
   };
 
-  useEffect(() => { fetchList(); }, [refreshKey]);
+  useEffect(() => {
+    fetchList();
+  }, [refreshKey]);
 
   const handleCreate = async () => {
     const values = await form.validateFields();
     await knowledgeBaseApi.create(values);
-    message.success('知识库创建成功');
+    message.success("知识库创建成功");
     setModalOpen(false);
     form.resetFields();
     fetchList();
@@ -52,7 +75,7 @@ export default function KnowledgeBaseSidebar({ selectedId, onSelect, refreshKey 
 
   const handleDelete = async (id: number) => {
     await knowledgeBaseApi.delete(id);
-    message.success('知识库已删除');
+    message.success("知识库已删除");
     fetchList();
   };
 
@@ -60,7 +83,7 @@ export default function KnowledgeBaseSidebar({ selectedId, onSelect, refreshKey 
     if (!renamingKb) return;
     const values = await renameForm.validateFields();
     await knowledgeBaseApi.update(renamingKb.id, { name: values.name });
-    message.success('知识库已重命名');
+    message.success("知识库已重命名");
     setRenameModalOpen(false);
     setRenamingKb(null);
     fetchList();
@@ -77,8 +100,15 @@ export default function KnowledgeBaseSidebar({ selectedId, onSelect, refreshKey 
   return (
     <div className={styles.sidebar}>
       <div className={styles.header}>
-        <Typography.Title level={5} style={{ margin: 0 }}>知识库</Typography.Title>
-        <Button type="primary" icon={<PlusOutlined />} size="small" onClick={() => setModalOpen(true)}>
+        <Typography.Title level={5} style={{ margin: 0 }}>
+          知识库
+        </Typography.Title>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          size="small"
+          onClick={() => setModalOpen(true)}
+        >
           新建
         </Button>
       </div>
@@ -88,35 +118,84 @@ export default function KnowledgeBaseSidebar({ selectedId, onSelect, refreshKey 
         dataSource={allItems}
         renderItem={(kb) => (
           <List.Item
-            className={`${styles.item} ${(selectedId === null && kb.id === 0) || selectedId === kb.id ? styles.selected : ''}`}
+            className={`${styles.item} ${
+              (selectedId === null && kb.id === 0) || selectedId === kb.id
+                ? styles.selected
+                : ""
+            }`}
             onClick={() => onSelect(kb.id === 0 ? null : kb)}
-            actions={kb.id === 0 ? [] : [
-              <Button key="edit" type="text" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); openRenameModal(kb); }} />,
-              <Popconfirm key="del" title="确定删除该知识库？" onConfirm={(e) => { e?.stopPropagation(); handleDelete(kb.id); }}>
-                <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
-              </Popconfirm>,
-            ]}
+            actions={
+              kb.id === 0
+                ? []
+                : [
+                    <Button
+                      key="edit"
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openRenameModal(kb);
+                      }}
+                    />,
+                    <Popconfirm
+                      key="del"
+                      title="确定删除该知识库？"
+                      onConfirm={(e) => {
+                        e?.stopPropagation();
+                        handleDelete(kb.id);
+                      }}
+                    >
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Popconfirm>,
+                  ]
+            }
           >
             <List.Item.Meta
-              avatar={kb.id === 0
-                ? <StopOutlined style={{ fontSize: 20, color: '#999' }} />
-                : <DatabaseOutlined style={{ fontSize: 20, color: '#1677ff' }} />
+              avatar={
+                kb.id === 0 ? (
+                  <StopOutlined style={{ fontSize: 20, color: "#999" }} />
+                ) : (
+                  <DatabaseOutlined
+                    style={{ fontSize: 20, color: "#1677ff" }}
+                  />
+                )
               }
               title={kb.name}
-              description={kb.id === 0 ? '不使用知识库' : (
-                <Space size={4}>
-                  <Tag color="blue">{kb.document_count} 文档</Tag>
-                  <Tag>{kb.permission === 'private' ? '私有' : '公开'}</Tag>
-                </Space>
-              )}
+              description={
+                kb.id === 0 ? (
+                  "不使用知识库"
+                ) : (
+                  <Space size={4}>
+                    <Tag color="blue">{kb.document_count} 文档</Tag>
+                    <Tag>{kb.permission === "private" ? "私有" : "公开"}</Tag>
+                  </Space>
+                )
+              }
             />
           </List.Item>
         )}
       />
 
-      <Modal title="新建知识库" open={modalOpen} onOk={handleCreate} onCancel={() => setModalOpen(false)} destroyOnClose>
+      <Modal
+        title="新建知识库"
+        open={modalOpen}
+        onOk={handleCreate}
+        onCancel={() => setModalOpen(false)}
+        destroyOnClose
+      >
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入知识库名称' }]}>
+          <Form.Item
+            name="name"
+            label="名称"
+            rules={[{ required: true, message: "请输入知识库名称" }]}
+          >
             <Input placeholder="例如：产品手册" />
           </Form.Item>
           <Form.Item name="description" label="描述">
@@ -125,9 +204,22 @@ export default function KnowledgeBaseSidebar({ selectedId, onSelect, refreshKey 
         </Form>
       </Modal>
 
-      <Modal title="重命名知识库" open={renameModalOpen} onOk={handleRename} onCancel={() => { setRenameModalOpen(false); setRenamingKb(null); }} destroyOnClose>
+      <Modal
+        title="重命名知识库"
+        open={renameModalOpen}
+        onOk={handleRename}
+        onCancel={() => {
+          setRenameModalOpen(false);
+          setRenamingKb(null);
+        }}
+        destroyOnClose
+      >
         <Form form={renameForm} layout="vertical">
-          <Form.Item name="name" label="新名称" rules={[{ required: true, message: '请输入知识库名称' }]}>
+          <Form.Item
+            name="name"
+            label="新名称"
+            rules={[{ required: true, message: "请输入知识库名称" }]}
+          >
             <Input placeholder="输入新名称" />
           </Form.Item>
         </Form>

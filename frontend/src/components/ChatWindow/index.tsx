@@ -25,8 +25,11 @@ import {
   HistoryOutlined,
   DeleteOutlined,
   PictureOutlined,
+  FileOutlined,
   CloseCircleFilled,
   CopyOutlined,
+  LoadingOutlined,
+  PaperClipOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import ReactMarkdown from "react-markdown";
@@ -56,9 +59,17 @@ const PLAIN_PROMPT_SUGGESTIONS = [
   "帮我翻译：Hello, how are you?",
 ];
 
+interface PendingFile {
+  filename: string;
+  content: string; // extracted text from Zhipu API
+  uploading?: boolean;
+}
+
 interface MessageItem {
   role: "user" | "assistant";
   content: string;
+  images?: string[];
+  fileName?: string; // attached file name for display
   citations?: Citation[];
   retrievalDebug?: RetrievalDebug | null;
 }
@@ -89,7 +100,9 @@ export default function ChatWindow({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [conversations, setConversations] = useState<ConversationInfo[]>([]);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const docInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sse = useSSE();
 
@@ -110,6 +123,8 @@ export default function ChatWindow({
       const restored: MessageItem[] = msgs.map((m) => ({
         role: m.role,
         content: m.content,
+        images: m.images || undefined,
+        fileName: m.file_name || undefined,
         citations: m.citations || undefined,
       }));
       setMessages(restored);
@@ -154,14 +169,22 @@ export default function ChatWindow({
 
         // Try to restore the last conversation for this KB
         const savedConvId = localStorage.getItem(`conv_${effectiveKbId}`);
-        const targetConvId = savedConvId ? Number(savedConvId) : (convs.length > 0 ? convs[0].id : null);
-        const targetConv = targetConvId ? convs.find((c) => c.id === targetConvId) : null;
+        const targetConvId = savedConvId
+          ? Number(savedConvId)
+          : convs.length > 0
+          ? convs[0].id
+          : null;
+        const targetConv = targetConvId
+          ? convs.find((c) => c.id === targetConvId)
+          : null;
 
         if (targetConv) {
           const { data: msgs } = await chatApi.getMessages(targetConv.id);
           const restored: MessageItem[] = msgs.map((m) => ({
             role: m.role,
             content: m.content,
+            images: m.images || undefined,
+            fileName: m.file_name || undefined,
             citations: m.citations || undefined,
           }));
           setMessages(restored);
@@ -171,6 +194,8 @@ export default function ChatWindow({
           const restored: MessageItem[] = msgs.map((m) => ({
             role: m.role,
             content: m.content,
+            images: m.images || undefined,
+            fileName: m.file_name || undefined,
             citations: m.citations || undefined,
           }));
           setMessages(restored);
@@ -217,18 +242,50 @@ export default function ChatWindow({
     setPendingImages((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const handleDocSelect = () => {
+    docInputRef.current?.click();
+  };
+
+  const handleDocChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    if (file.size > 50 * 1024 * 1024) {
+      message.warning("文件大小不能超过 50MB");
+      return;
+    }
+
+    setPendingFile({ filename: file.name, content: "", uploading: true });
+
+    try {
+      const { data } = await chatApi.uploadFile(file);
+      setPendingFile({ filename: data.filename, content: data.content });
+    } catch (err: unknown) {
+      message.error("文件上传失败：" + ((err as Error).message || "未知错误"));
+      setPendingFile(null);
+    }
+  };
+
   const handleSend = async () => {
     const question = inputValue.trim();
     if (!question || sse.loading) return;
 
     const imagesToSend = [...pendingImages];
+    const fileToSend = pendingFile;
     setInputValue("");
     setPendingImages([]);
+    setPendingFile(null);
 
-    const userContent = imagesToSend.length > 0
-      ? `${question}\n[附带 ${imagesToSend.length} 张图片]`
-      : question;
-    setMessages((prev) => [...prev, { role: "user", content: userContent }]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        content: question,
+        images: imagesToSend.length > 0 ? imagesToSend : undefined,
+        fileName: fileToSend?.filename,
+      },
+    ]);
 
     await sse.send({
       knowledgeBaseId: knowledgeBaseId ?? null,
@@ -236,6 +293,8 @@ export default function ChatWindow({
       conversationId: sse.conversationId ?? undefined,
       useHyde,
       images: imagesToSend.length > 0 ? imagesToSend : undefined,
+      fileContent: fileToSend?.content,
+      fileName: fileToSend?.filename,
     });
   };
 
@@ -410,7 +469,12 @@ export default function ChatWindow({
                       {msg.content}
                     </ReactMarkdown>
                   </div>
-                  {msg.citations && <CitationView citations={msg.citations} onCitationClick={onCitationClick} />}
+                  {msg.citations && (
+                    <CitationView
+                      citations={msg.citations}
+                      onCitationClick={onCitationClick}
+                    />
+                  )}
                   {showDebug && msg.retrievalDebug && (
                     <RetrievalDebugPanel
                       debug={msg.retrievalDebug}
@@ -420,7 +484,10 @@ export default function ChatWindow({
                     />
                   )}
                   <div className={styles.assistantFooter}>
-                    <Typography.Text type="secondary" className={styles.aiDisclaimer}>
+                    <Typography.Text
+                      type="secondary"
+                      className={styles.aiDisclaimer}
+                    >
                       本回答由 AI 生成，内容仅供参考，请仔细甄别。
                     </Typography.Text>
                     <Tooltip title="复制回答">
@@ -438,9 +505,29 @@ export default function ChatWindow({
                   </div>
                 </>
               ) : (
-                <Typography.Text style={{ whiteSpace: "pre-wrap" }}>
-                  {msg.content}
-                </Typography.Text>
+                <>
+                  <Typography.Text style={{ whiteSpace: "pre-wrap" }}>
+                    {msg.content}
+                  </Typography.Text>
+                  {msg.fileName && (
+                    <div className={styles.fileAttachment}>
+                      <PaperClipOutlined style={{ marginRight: 6 }} />
+                      <span>{msg.fileName}</span>
+                    </div>
+                  )}
+                  {msg.images && msg.images.length > 0 && (
+                    <div className={styles.userImageList}>
+                      {msg.images.map((src, imgIdx) => (
+                        <img
+                          key={imgIdx}
+                          src={src}
+                          alt={`user-img-${imgIdx}`}
+                          className={styles.userImage}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -470,6 +557,25 @@ export default function ChatWindow({
       </div>
 
       <div className={styles.inputArea}>
+        {/* File preview strip */}
+        {pendingFile && (
+          <div className={styles.filePreviewStrip}>
+            <div className={styles.filePreviewItem}>
+              <FileOutlined style={{ marginRight: 6 }} />
+              <span className={styles.filePreviewName}>
+                {pendingFile.filename}
+              </span>
+              {pendingFile.uploading ? (
+                <LoadingOutlined style={{ marginLeft: 8 }} />
+              ) : (
+                <CloseCircleFilled
+                  className={styles.imageRemoveBtn}
+                  onClick={() => setPendingFile(null)}
+                />
+              )}
+            </div>
+          </div>
+        )}
         {/* Image preview strip */}
         {pendingImages.length > 0 && (
           <div className={styles.imagePreviewStrip}>
@@ -494,20 +600,33 @@ export default function ChatWindow({
                 handleSend();
               }
             }}
-            placeholder={isPlainChat ? "输入问题，可附带图片进行多模态对话..." : "输入您的问题，按 Enter 发送，Shift+Enter 换行..."}
+            placeholder={
+              isPlainChat
+                ? "输入问题，可附带图片或文件进行多模态对话..."
+                : "输入您的问题，按 Enter 发送，Shift+Enter 换行..."
+            }
             autoSize={{ minRows: 3, maxRows: 6 }}
             disabled={sse.loading}
             className={styles.input}
           />
           <div className={styles.inputActions}>
             {isPlainChat && (
-              <Tooltip title="上传图片（支持多张）">
-                <Button
-                  icon={<PictureOutlined />}
-                  onClick={handleImageSelect}
-                  disabled={sse.loading}
-                />
-              </Tooltip>
+              <div className={styles.fileActions}>
+                <Tooltip title="上传文件（PDF/Word/Excel等）">
+                  <Button
+                    icon={<PaperClipOutlined />}
+                    onClick={handleDocSelect}
+                    disabled={sse.loading || !!pendingFile}
+                  />
+                </Tooltip>
+                <Tooltip title="上传图片（支持多张）">
+                  <Button
+                    icon={<PictureOutlined />}
+                    onClick={handleImageSelect}
+                    disabled={sse.loading}
+                  />
+                </Tooltip>
+              </div>
             )}
             {sse.loading ? (
               <Button icon={<StopOutlined />} onClick={sse.abort} danger>
@@ -525,6 +644,13 @@ export default function ChatWindow({
             )}
           </div>
         </div>
+        <input
+          ref={docInputRef}
+          type="file"
+          accept=".pdf,.docx,.doc,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.md,.py,.png,.jpg,.jpeg,.bmp,.gif"
+          style={{ display: "none" }}
+          onChange={handleDocChange}
+        />
         <input
           ref={fileInputRef}
           type="file"

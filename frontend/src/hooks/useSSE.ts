@@ -16,6 +16,8 @@ interface SendOptions {
   conversationId?: number;
   useHyde?: boolean;
   images?: string[];  // base64 data URIs for multimodal chat
+  fileContent?: string;  // extracted text from uploaded file
+  fileName?: string;  // original filename
 }
 
 export function useSSE() {
@@ -30,7 +32,7 @@ export function useSSE() {
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(async (options: SendOptions) => {
-    const { knowledgeBaseId, question, conversationId, useHyde = false, images } = options;
+    const { knowledgeBaseId, question, conversationId, useHyde = false, images, fileContent, fileName } = options;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -53,6 +55,10 @@ export function useSSE() {
       };
       if (images && images.length > 0) {
         body.images = images;
+      }
+      if (fileContent) {
+        body.file_content = fileContent;
+        body.file_name = fileName;
       }
 
       const response = await fetch('/api/chat/stream', {
