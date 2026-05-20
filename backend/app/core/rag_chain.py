@@ -448,10 +448,12 @@ async def rag_stream(
 
 # ======================== Plain Chat (GLM-4V-Flash - Free Multimodal from Zhipu AI) ========================
 
-PLAIN_CHAT_SYSTEM_PROMPT = """你是一个智能AI助手，请用简洁、准确、友好的方式回答用户问题。
+PLAIN_CHAT_SYSTEM_PROMPT_TEMPLATE = """你是一个智能AI助手，请用简洁、准确、友好的方式回答用户问题。
+当前时间：{current_time}
 使用Markdown格式化回复：标题分隔主题、列表展示要点、**加粗**关键信息。
 如果用户发送了图片，请仔细观察图片内容并结合用户问题进行回答。
-如果用户上传了文件，请仔细阅读文件内容并结合用户问题进行准确回答。"""
+如果用户上传了文件，请仔细阅读文件内容并结合用户问题进行准确回答。
+对于天气等实时信息，请告知用户你无法获取实时数据，建议查询天气应用。"""
 
 
 def _get_chat_llm(streaming: bool = False) -> ChatOpenAI:
@@ -487,7 +489,10 @@ async def plain_chat_stream(
     from langchain_core.messages import SystemMessage
 
     trimmed_history = _trim_chat_history(chat_history)
-    messages = [SystemMessage(content=PLAIN_CHAT_SYSTEM_PROMPT)]
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y年%m月%d日 %A %H:%M")
+    system_prompt = PLAIN_CHAT_SYSTEM_PROMPT_TEMPLATE.format(current_time=current_time)
+    messages = [SystemMessage(content=system_prompt)]
     messages.extend(_to_langchain_messages(trimmed_history))
 
     # Build the user question text, prepending file content if provided

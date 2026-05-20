@@ -222,6 +222,15 @@ npx vite --host 127.0.0.1 --port 3000
 - **后端 API**: `http://127.0.0.1:8000`
 - **API 文档**: `http://127.0.0.1:8000/docs`
 
+### 重启后端
+
+在终端里按 Ctrl+C 停止后端，然后重新启动：
+
+```bash
+cd /Users/a211026/Desktop/ai/pdf-rag-qa/backend
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
 ### 后台启动（不占用终端）
 
 ```bash
