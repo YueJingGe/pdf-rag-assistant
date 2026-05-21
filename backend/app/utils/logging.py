@@ -3,7 +3,7 @@
 import logging
 from app.core.config import settings
 
-logger = logging.getLogger("pdf-rag-qa")
+logger = logging.getLogger("pdf-rag-assistant")
 logger.setLevel(logging.INFO)
 
 _langfuse_handler = None

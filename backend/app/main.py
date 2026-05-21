@@ -45,4 +45,4 @@ app.include_router(feedback_router)
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "pdf-rag-qa"}
+    return {"status": "ok", "service": "pdf-rag-assistant"}

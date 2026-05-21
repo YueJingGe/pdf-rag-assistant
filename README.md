@@ -43,7 +43,7 @@
 ## 项目结构
 
 ```
-pdf-rag-qa/
+pdf-rag-assistant/
 ├── backend/
 │   ├── app/
 │   │   ├── api/                    # API 路由层
@@ -229,7 +229,7 @@ npx vite --host 127.0.0.1 --port 3000
 在终端里按 Ctrl+C 停止后端，然后重新启动：
 
 ```bash
-cd /Users/a211026/Desktop/ai/pdf-rag-qa/backend
+cd /Users/a211026/Desktop/ai/pdf-rag-assistant/backend
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
