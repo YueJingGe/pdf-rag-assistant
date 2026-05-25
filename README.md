@@ -1,15 +1,18 @@
-# PDF RAG 智能问答系统
+# PDF RAG 智能问答系统 | PDF Knowledge Base QA with RAG
 
-> 基于 DeepSeek + LangChain + FAISS 构建的企业级多知识库 RAG（Retrieval-Augmented Generation）问答系统
+> 🚀 基于 DeepSeek + LangChain + FAISS 构建的**全栈 RAG（Retrieval-Augmented Generation）智能问答系统**，支持多知识库管理、混合检索、流式对话、OCR 扫描件识别，开箱即用的企业级文档问答解决方案。
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green?logo=fastapi)
-![React](https://img.shields.io/badge/React-18-blue?logo=react)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)
-![LangChain](https://img.shields.io/badge/LangChain-LCEL-orange)
-![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-purple)
+[![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green?logo=fastapi)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-blue?logo=react)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)](https://typescriptlang.org)
+[![LangChain](https://img.shields.io/badge/LangChain-LCEL-orange)](https://langchain.com)
+[![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-purple)](https://deepseek.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-支持 PDF（含扫描件 OCR）/DOCX/TXT/Markdown 文档上传、向量化检索、流式对话、引用溯源、RBAC 权限管理与检索效果调优。
+**PDF RAG Assistant** 是一个面向学习者和开发者的开源 RAG 全栈项目，涵盖文档解析（PDF/DOCX/TXT/Markdown）、向量化存储（FAISS）、混合检索（向量 + BM25）、LLM 流式生成（DeepSeek/GLM）、多模态理解（图片/文件）、语义缓存、引用溯源等完整 RAG 工程实践。适合用于学习 LangChain、RAG 架构、向量数据库、Prompt Engineering、SSE 流式通信等技术。
+
+**Keywords**: RAG, Retrieval-Augmented Generation, PDF问答, 知识库问答, LangChain, FAISS, DeepSeek, 向量检索, 文档智能, OCR, 混合检索, 流式对话, FastAPI, React, 全栈项目, AI应用开发, LLM应用
 
 ### 核心亮点
 
