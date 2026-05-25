@@ -12,17 +12,16 @@
 
 **PDF RAG Assistant** 是一个面向学习者和开发者的开源 RAG 全栈项目，涵盖文档解析（PDF/DOCX/TXT/Markdown）、向量化存储（FAISS）、混合检索（向量 + BM25）、LLM 流式生成（DeepSeek/GLM）、多模态理解（图片/文件）、语义缓存、引用溯源等完整 RAG 工程实践。适合用于学习 LangChain、RAG 架构、向量数据库、Prompt Engineering、SSE 流式通信等技术。
 
-**Keywords**: RAG, Retrieval-Augmented Generation, PDF问答, 知识库问答, LangChain, FAISS, DeepSeek, 向量检索, 文档智能, OCR, 混合检索, 流式对话, FastAPI, React, 全栈项目, AI应用开发, LLM应用
+**Keywords**: RAG, Retrieval-Augmented Generation, PDF 问答, 知识库问答, LangChain, FAISS, DeepSeek, 向量检索, 文档智能, OCR, 混合检索, 流式对话, FastAPI, React, 全栈项目, AI 应用开发, LLM 应用
 
 ## 系统截图
 
-| 知识库问答 | 普通聊天（联网搜索 + 多模态） |
-|:---:|:---:|
-| ![知识库问答](systemImage/系统功能图.png) | ![普通聊天](systemImage/系统功能图2.png) |
-
-| 文档管理 | 检索调试面板 |
-|:---:|:---:|
-| ![文档管理](systemImage/系统功能图3.png) | ![检索调试](systemImage/系统功能图1.png) |
+知识库问答
+![知识库问答](systemImage/系统功能图1.png)
+普通聊天
+![普通聊天](systemImage/系统功能图2.png)
+文档管理
+![文档管理](systemImage/系统功能图3.png)
 
 ### 核心亮点
 
