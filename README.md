@@ -14,6 +14,16 @@
 
 **Keywords**: RAG, Retrieval-Augmented Generation, PDF问答, 知识库问答, LangChain, FAISS, DeepSeek, 向量检索, 文档智能, OCR, 混合检索, 流式对话, FastAPI, React, 全栈项目, AI应用开发, LLM应用
 
+## 系统截图
+
+| 知识库问答 | 普通聊天（联网搜索 + 多模态） |
+|:---:|:---:|
+| ![知识库问答](systemImage/系统功能图.png) | ![普通聊天](systemImage/系统功能图2.png) |
+
+| 文档管理 | 检索调试面板 |
+|:---:|:---:|
+| ![文档管理](systemImage/系统功能图3.png) | ![检索调试](systemImage/系统功能图1.png) |
+
 ### 核心亮点
 
 - 🔍 **混合检索**：向量相似度 + BM25 关键词检索，提升召回率
