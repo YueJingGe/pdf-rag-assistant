@@ -21,9 +21,11 @@ async def create_kb(
 ## 鉴权挂载（P0-1 硬性成果，不可回退）
 
 - **所有业务端点必须挂 `Depends(require_user)`**，仅 `/api/auth/register`、`/api/auth/login`、`/api/health` 公开
-- KB 级端点用 `ensure_kb_permission(kb_id, user, role, db)`：
-  - 读操作 → `"viewer"`；写操作 → `"owner"`
-  - 不存在抛 404、无权限抛 403，通过后返回 KB 供路由复用（避免二次查询）
+- KB 级权限校验（`core/auth.py` 三层拆分，P0-2 起生效）：
+  - `has_kb_permission(kb_id, user, role, db) -> bool`：纯判定、无异常（kb_id 不存在返回 False），适合布尔场景
+  - `get_kb_or_raise(kb_id, user, role, db) -> KnowledgeBase`：查询 + 校验，抛**领域异常**（NotFoundError / PermissionDeniedError），**service 层统一调用此函数**
+  - `ensure_kb_permission(...)`：薄封装（内部调 get_kb_or_raise，将 ServiceError 转 HTTPException 404/403），**仅供路由层特殊场景**，service 禁止调用
+  - 角色约定：读操作 → `"viewer"`；写操作 → `"owner"`
 - 验证方式：`http://127.0.0.1:8000/docs` 中业务端点必须全部带锁图标
 
 ## 错误语义（安全相关，勿改）
@@ -41,11 +43,12 @@ services/exceptions.py
 ├── ServiceError(Exception)          # 基类，映射 500
 ├── NotFoundError(ServiceError)      # → 404
 ├── PermissionDeniedError(ServiceError)  # → 403
-└── ValidationError(ServiceError)    # → 400
+├── ValidationError(ServiceError)    # → 400
+└── ConflictError(ServiceError)      # → 409（P1 授权管理预留）
 ```
 
-- service **只抛 ServiceError 系列**，不碰 HTTPException
-- `main.py` 注册全局 exception handler 完成 ServiceError → HTTPException 转换
+- service **只抛 ServiceError 系列**，不碰 HTTPException；`core/auth.py` 的 `get_kb_or_raise` 同规则（抛领域异常，由全局 handler 转 HTTP）
+- `main.py` 注册全局 exception handler 完成 ServiceError → HTTPException 转换（NotFoundError→404 / PermissionDeniedError→403 / ValidationError→400 / ConflictError→409 / 基类兜底→500）
 - 过渡期（P0-2 完成 前）路由内 `HTTPException` 允许存在，但新增 service 函数内部禁止使用
 
 ## 前端配套
