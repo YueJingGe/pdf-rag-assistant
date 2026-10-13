@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Tabs, Dropdown, Button, Avatar, Space, message } from 'antd';
+import { Layout, Tabs, Dropdown, Button, Avatar, Space, Typography, message } from 'antd';
 import {
   MessageOutlined, FileOutlined, UserOutlined, LogoutOutlined,
   BarChartOutlined, LoginOutlined,
@@ -11,7 +11,7 @@ import LoginModal from './components/LoginModal';
 import FeedbackDashboard from './components/FeedbackDashboard';
 import DocumentViewer from './components/DocumentViewer';
 import type { CitationClickInfo } from './components/CitationView';
-import { authApi, type KnowledgeBase, type UserInfo } from './services/api';
+import { authApi, knowledgeBaseApi, type KnowledgeBase, type UserInfo } from './services/api';
 
 const { Sider, Content, Header } = Layout;
 
@@ -54,8 +54,26 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('selectedKB');
     setUser(null);
+    setSelectedKB(null);
     message.success('已退出登录');
+  };
+
+  // 登录后校验 localStorage 恢复的 selectedKB 是否在当前用户可见列表内
+  // （防止用户 A 登录后看到用户 B 私有知识库名称的越权显示）
+  const restoreVisibleKB = async () => {
+    try {
+      const { data: kbs } = await knowledgeBaseApi.list();
+      const saved = localStorage.getItem('selectedKB');
+      const savedKB: KnowledgeBase | null = saved ? JSON.parse(saved) : null;
+      if (savedKB?.id && kbs.some((kb) => kb.id === savedKB.id)) {
+        return; // 恢复的知识库仍可见，保持不动
+      }
+      setSelectedKB(kbs[0] ?? null); // 不可见则回退到第一个可见 KB，无则普通聊天
+    } catch {
+      setSelectedKB(null);
+    }
   };
 
   const handleLoginSuccess = (userInfo: UserInfo, token: string) => {
@@ -63,7 +81,19 @@ export default function App() {
     setUser(userInfo);
     setLoginOpen(false);
     message.success(`欢迎回来，${userInfo.display_name}`);
+    restoreVisibleKB();
   };
+
+  // 监听 401 登录过期事件（axios 拦截器 / useSSE 广播），弹出登录框
+  useEffect(() => {
+    const handler = () => {
+      setUser(null);
+      setLoginOpen(true);
+      message.warning('登录已过期，请重新登录');
+    };
+    window.addEventListener('auth:unauthorized', handler);
+    return () => window.removeEventListener('auth:unauthorized', handler);
+  }, []);
 
   const userRole = user?.is_admin ? 'owner' : 'member';
   const canManageDocs = userRole === 'owner' || userRole === 'member';
@@ -111,6 +141,23 @@ export default function App() {
       ),
     }] : []),
   ];
+
+  // 未登录：不渲染业务组件，保证登录前不发起任何业务请求
+  if (!user) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f5f7fa' }}>
+        <span style={{ fontSize: 40, marginBottom: 16 }}>📚</span>
+        <Typography.Title level={3} style={{ marginBottom: 8 }}>PDF RAG 智能问答系统</Typography.Title>
+        <Typography.Text type="secondary" style={{ marginBottom: 24 }}>
+          多知识库 RAG 问答 · 混合检索 · 引用溯源
+        </Typography.Text>
+        <Button type="primary" icon={<LoginOutlined />} onClick={() => setLoginOpen(true)}>
+          登录 / 注册
+        </Button>
+        <LoginModal open={loginOpen} onCancel={() => setLoginOpen(false)} onSuccess={handleLoginSuccess} />
+      </div>
+    );
+  }
 
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>

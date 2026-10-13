@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.models.database import get_db
-from app.models.knowledge_base import KnowledgeBase
+from app.models.user import User
 from app.models.conversation import Conversation, Message
+from app.core.auth import require_user, ensure_kb_permission
 from app.core.rag_chain import rag_stream, rag_query, plain_chat_stream
 from app.core.config import settings
 
@@ -38,24 +39,39 @@ class ConversationResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+async def _get_own_conversation(
+    conversation_id: int,
+    current_user: User,
+    db: AsyncSession,
+) -> Conversation:
+    """加载会话并校验归属；不存在或非本人会话一律 404（防止会话 ID 枚举探测）。"""
+    conversation = await db.get(Conversation, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
+
+
 @router.post("/stream")
-async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat_stream(
+    req: ChatRequest,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
     # Determine if this is a plain chat (no KB) or RAG chat
     is_plain_chat = req.knowledge_base_id is None or req.knowledge_base_id == 0
 
     if not is_plain_chat:
-        kb = await db.get(KnowledgeBase, req.knowledge_base_id)
-        if not kb:
-            raise HTTPException(status_code=404, detail="Knowledge base not found")
+        # RAG 模式校验知识库读权限；普通聊天无知识库归属，仅需登录
+        await ensure_kb_permission(req.knowledge_base_id, current_user, "viewer", db)
 
     if req.conversation_id:
-        conversation = await db.get(Conversation, req.conversation_id)
-        if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found")
+        # 校验会话归属：只能在自己名下的会话里继续对话
+        conversation = await _get_own_conversation(req.conversation_id, current_user, db)
     else:
         conversation = Conversation(
             knowledge_base_id=req.knowledge_base_id or 0,
             title=req.question[:50],
+            user_id=current_user.id,
         )
         db.add(conversation)
         await db.commit()
@@ -129,11 +145,15 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/query")
-async def chat_query(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat_query(
+    req: ChatRequest,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Non-streaming RAG query for A/B testing."""
-    kb = await db.get(KnowledgeBase, req.knowledge_base_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    if req.knowledge_base_id:
+        # RAG 模式校验知识库读权限
+        await ensure_kb_permission(req.knowledge_base_id, current_user, "viewer", db)
 
     chat_history: list[dict] = []
     if req.conversation_id:
@@ -156,17 +176,34 @@ async def chat_query(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/conversations/{kb_id}", response_model=list[ConversationResponse])
-async def list_conversations(kb_id: int, db: AsyncSession = Depends(get_db)):
+async def list_conversations(
+    kb_id: int,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # 普通聊天（kb_id=0）无知识库校验；RAG 模式校验读权限
+    if kb_id:
+        await ensure_kb_permission(kb_id, current_user, "viewer", db)
+    # 只返回当前用户自己的会话（会话归属隔离）
     result = await db.execute(
         select(Conversation)
-        .where(Conversation.knowledge_base_id == kb_id)
+        .where(
+            Conversation.knowledge_base_id == kb_id,
+            Conversation.user_id == current_user.id,
+        )
         .order_by(Conversation.created_at.desc())
     )
     return result.scalars().all()
 
 
 @router.get("/messages/{conversation_id}")
-async def get_messages(conversation_id: int, db: AsyncSession = Depends(get_db)):
+async def get_messages(
+    conversation_id: int,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # 只能读取本人会话的消息历史
+    await _get_own_conversation(conversation_id, current_user, db)
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
@@ -188,10 +225,13 @@ async def get_messages(conversation_id: int, db: AsyncSession = Depends(get_db))
 
 
 @router.delete("/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: int, db: AsyncSession = Depends(get_db)):
-    conversation = await db.get(Conversation, conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+async def delete_conversation(
+    conversation_id: int,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # 只能删除本人会话
+    conversation = await _get_own_conversation(conversation_id, current_user, db)
     await db.execute(sa_delete(Message).where(Message.conversation_id == conversation_id))
     await db.delete(conversation)
     await db.commit()
@@ -207,7 +247,10 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 @router.post("/upload-file")
-async def upload_file_for_chat(file: UploadFile = File(...)):
+async def upload_file_for_chat(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_user),
+):
     """Upload a file to Zhipu AI for content extraction (GLM-4V-Flash file understanding).
 
     Returns extracted text content that can be used as context in plain chat.

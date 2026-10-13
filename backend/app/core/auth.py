@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.database import get_db
 from app.models.user import User, KnowledgeBasePermission
+from app.models.knowledge_base import KnowledgeBase
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -80,27 +81,66 @@ async def require_admin(
     return user
 
 
-async def check_kb_permission(
-    user_id: int,
-    knowledge_base_id: int,
+ROLE_LEVELS = {"viewer": 1, "member": 2, "owner": 3}
+
+
+async def has_kb_permission(
+    kb: KnowledgeBase,
+    user: User,
     required_role: str,
     db: AsyncSession,
 ) -> bool:
-    """Check if user has the required role on a knowledge base.
-    
-    Role hierarchy: owner > member > viewer
-    """
-    role_levels = {"viewer": 1, "member": 2, "owner": 3}
-    required_level = role_levels.get(required_role, 0)
+    """判定用户对某个知识库是否具备 required_role 级别权限（纯判定，不抛异常）。
 
+    读权限（required_role 为 viewer/member）= owner || admin
+        || kb.permission == "public" || 存量无主(user_id IS NULL，视为公共可读)
+        || kb_permissions 表中存在授权记录且角色级别达标（含 owner 授权）
+    写权限（required_role == owner）= owner || admin
+    """
+    if user.is_admin:
+        return True
+
+    is_owner = kb.user_id is not None and kb.user_id == user.id
+    if required_role == "owner":
+        return is_owner
+
+    # 存量无主知识库视为公共可读；public 知识库所有登录用户可读
+    if kb.user_id is None or kb.permission == "public" or is_owner:
+        return True
+
+    # 查询授权表：viewer/member/owner 任一授权角色均满足读权限，仅 owner 满足写
     result = await db.execute(
-        select(KnowledgeBasePermission)
-        .where(
-            KnowledgeBasePermission.user_id == user_id,
-            KnowledgeBasePermission.knowledge_base_id == knowledge_base_id,
+        select(KnowledgeBasePermission).where(
+            KnowledgeBasePermission.user_id == user.id,
+            KnowledgeBasePermission.knowledge_base_id == kb.id,
         )
     )
     permission = result.scalar_one_or_none()
     if not permission:
         return False
-    return role_levels.get(permission.role, 0) >= required_level
+    return ROLE_LEVELS.get(permission.role, 0) >= ROLE_LEVELS.get(required_role, 1)
+
+
+async def ensure_kb_permission(
+    knowledge_base_id: int,
+    user: User,
+    required_role: str,
+    db: AsyncSession,
+) -> KnowledgeBase:
+    """加载知识库并强制校验权限；通过则返回 KB 实体供路由复用。
+
+    - 知识库不存在：抛 404
+    - 无所需权限：抛 403（读权限规则见 has_kb_permission）
+    """
+    kb = await db.get(KnowledgeBase, knowledge_base_id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not await has_kb_permission(kb, user, required_role, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No permission to access this knowledge base",
+        )
+    return kb

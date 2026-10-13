@@ -72,6 +72,12 @@ export function useSSE() {
         signal: controller.signal,
       });
 
+      // SSE 走原生 fetch 不经过 axios 拦截器，401 需单独广播登录过期事件
+      if (response.status === 401) {
+        localStorage.removeItem('token');
+        window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+        throw new Error('登录已过期，请重新登录');
+      }
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

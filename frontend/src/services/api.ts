@@ -11,6 +11,23 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// 401 统一处理：清除本地 token 并广播事件，由 App.tsx 监听后弹出登录框
+// 注意：登录/注册接口的 401/400 属于正常业务错误（密码错误/账号已存在），
+// 不代表 token 过期，需排除，否则会误弹「登录已过期」提示
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const requestUrl: string = error?.config?.url || '';
+    const isAuthRequest =
+      requestUrl.includes('/auth/login') || requestUrl.includes('/auth/register');
+    if (error?.response?.status === 401 && !isAuthRequest) {
+      localStorage.removeItem('token');
+      window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+    }
+    return Promise.reject(error);
+  },
+);
+
 export interface KnowledgeBase {
   id: number;
   name: string;

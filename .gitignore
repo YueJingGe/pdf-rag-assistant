@@ -18,6 +18,7 @@ backend/.env
 # Runtime data (knowledge bases, uploads, vector indexes, database)
 # These are generated at runtime and should not be committed
 backend/data/db.sqlite3
+backend/data/db.sqlite3.bak
 backend/data/rag_qa.db
 backend/data/uploads/
 backend/data/faiss_indexes/
@@ -27,6 +28,7 @@ node_modules/
 frontend/node_modules/
 frontend/build/
 frontend/dist/
+frontend/tsconfig.tsbuildinfo
 
 # IDE
 .idea/

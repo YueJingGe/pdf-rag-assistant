@@ -14,6 +14,10 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    # 归属用户：可为空以兼容存量数据；会话列表/读取/删除均限定本人
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, index=True
+    )
     knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(500), default="新对话")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

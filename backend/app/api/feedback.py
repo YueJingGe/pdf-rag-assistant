@@ -8,7 +8,9 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
+from app.models.user import User
 from app.models.feedback import RetrievalFeedback
+from app.core.auth import require_user, require_admin, ensure_kb_permission
 
 router = APIRouter(prefix="/api/feedback", tags=["feedback"])
 
@@ -41,7 +43,11 @@ class FeedbackStats(BaseModel):
 
 
 @router.post("", response_model=dict)
-async def create_feedback(req: FeedbackCreateRequest, db: AsyncSession = Depends(get_db)):
+async def create_feedback(
+    req: FeedbackCreateRequest,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
     feedback = RetrievalFeedback(
         message_id=req.message_id,
         knowledge_base_id=req.knowledge_base_id,
@@ -57,7 +63,13 @@ async def create_feedback(req: FeedbackCreateRequest, db: AsyncSession = Depends
 
 
 @router.get("/stats/{kb_id}", response_model=FeedbackStats)
-async def get_feedback_stats(kb_id: int, db: AsyncSession = Depends(get_db)):
+async def get_feedback_stats(
+    kb_id: int,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # 反馈统计可能暴露检索质量信息，先校验知识库读权限
+    await ensure_kb_permission(kb_id, current_user, "viewer", db)
     total_result = await db.execute(
         select(func.count(RetrievalFeedback.id))
         .where(RetrievalFeedback.knowledge_base_id == kb_id)
@@ -84,8 +96,14 @@ async def get_feedback_stats(kb_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/export/{kb_id}")
-async def export_feedback(kb_id: int, db: AsyncSession = Depends(get_db)):
+async def export_feedback(
+    kb_id: int,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
     """Export all feedback for a knowledge base (for reranker training)."""
+    # 导出含原始问答语料，仅 admin 且需为该库 owner（admin 由 require_admin 保证）
+    await ensure_kb_permission(kb_id, current_user, "owner", db)
     result = await db.execute(
         select(RetrievalFeedback)
         .where(RetrievalFeedback.knowledge_base_id == kb_id)

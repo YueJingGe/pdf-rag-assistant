@@ -36,6 +36,7 @@
 - 📖 **引用溯源**：回答关联原文段落，点击即可定位到源文档
 - 💾 **语义缓存**：相似问题命中缓存，显著降低 API 调用成本
 - 🔐 **多租户隔离**：每个知识库独立 FAISS 索引，数据互不干扰
+- 🛡️ **鉴权与数据归属**：所有业务接口强制 JWT 认证（未登录 401），知识库/会话归属创建者，他人私有库 403 拒绝
 
 ## 技术栈
 
@@ -167,8 +168,9 @@ DeepSeek API 流式生成 → SSE 推送到前端
 
 ### 用户认证
 
-- **注册 / 登录**：JWT Token 认证，支持 Bearer Token 鉴权
-- **RBAC 权限**：owner / member / viewer 三级角色控制
+- **注册 / 登录**：JWT Token 认证，所有业务接口强制 Bearer Token 鉴权（未登录 401）
+- **数据归属**：知识库/对话归属创建者，会话列表与消息仅本人可见，跨用户访问他人会话返回 404
+- **RBAC 权限**：owner / member / viewer 三级角色；公开库全员可读，私有库仅 owner 与被授权者可读；更新/删除/上传文档仅 owner 可操作（无权限 403）
 
 ### 智能问答
 
@@ -217,6 +219,14 @@ cp .env.example .env  # 编辑 .env 填入 API Key
 cd ../frontend
 npm install
 ```
+
+> ⚠️ **存量数据库升级**：如果是从旧版本升级（`backend/data/db.sqlite3` 已有数据），需要执行一次迁移脚本为知识库/会话表补充 `user_id` 归属字段（幂等，可重复执行）：
+>
+> ```bash
+> python3 scripts/migrate_add_user_id.py
+> ```
+>
+> 脚本会自动备份数据库后再执行 ALTER TABLE，存量数据归属会回填给第一个注册用户（优先 admin）。全新部署可跳过此步。
 
 ### 启动前后端
 
@@ -328,6 +338,9 @@ python scripts/rebuild_index.py [kb_id]
 
 # RAGAS 离线评估（评估检索质量和生成质量）
 python scripts/run_ragas_eval.py <kb_id> [qa_pairs.json]
+
+# 数据库结构迁移（存量库增加 user_id 归属字段；幂等可重复执行）
+python scripts/migrate_add_user_id.py
 ```
 
 ## 关键设计决策

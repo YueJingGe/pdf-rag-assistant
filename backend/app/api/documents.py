@@ -9,8 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
-from app.models.knowledge_base import KnowledgeBase
 from app.models.document import Document
+from app.models.user import User
+from app.core.auth import require_user, ensure_kb_permission
 from app.core.loader import load_document, SUPPORTED_EXTENSIONS
 from app.core.splitter import split_documents
 from app.core.vector_store import vector_store_manager
@@ -37,11 +38,11 @@ class DocumentResponse(BaseModel):
 async def upload_document(
     kb_id: int,
     file: UploadFile = File(...),
+    current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
-    kb = await db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    # 上传是写操作，仅 owner / admin；不存在 404，无权限 403
+    await ensure_kb_permission(kb_id, current_user, "owner", db)
 
     extension = get_file_extension(file.filename or "")
     if extension not in SUPPORTED_EXTENSIONS:
@@ -91,10 +92,13 @@ async def upload_document(
 
 
 @router.get("", response_model=list[DocumentResponse])
-async def list_documents(kb_id: int, db: AsyncSession = Depends(get_db)):
-    kb = await db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+async def list_documents(
+    kb_id: int,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # 读权限：public / 本人 / 授权用户
+    await ensure_kb_permission(kb_id, current_user, "viewer", db)
 
     result = await db.execute(
         select(Document)
@@ -105,7 +109,14 @@ async def list_documents(kb_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/{doc_id}")
-async def delete_document(kb_id: int, doc_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_document(
+    kb_id: int,
+    doc_id: int,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # 删除是写操作，仅 owner / admin
+    await ensure_kb_permission(kb_id, current_user, "owner", db)
     doc = await db.get(Document, doc_id)
     if not doc or doc.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -127,12 +138,12 @@ class BatchDeleteRequest(BaseModel):
 async def batch_delete_documents(
     kb_id: int,
     req: BatchDeleteRequest,
+    current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Batch delete multiple documents and rebuild the FAISS index once."""
-    kb = await db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    # 批量删除是写操作，仅 owner / admin
+    await ensure_kb_permission(kb_id, current_user, "owner", db)
 
     if not req.doc_ids:
         raise HTTPException(status_code=400, detail="No document IDs provided")
@@ -185,9 +196,12 @@ async def _rebuild_kb_index(kb_id: int, db: AsyncSession):
 async def get_document_content_by_source(
     kb_id: int,
     source_filename: str,
+    current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get document content by source_filename (the stored filename on disk)."""
+    # 读权限：public / 本人 / 授权用户
+    await ensure_kb_permission(kb_id, current_user, "viewer", db)
     from pathlib import Path
 
     result = await db.execute(
@@ -218,9 +232,12 @@ async def get_document_content_by_source(
 async def get_document_content(
     kb_id: int,
     doc_id: int,
+    current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get the full text content of a document for viewer display."""
+    # 读权限：public / 本人 / 授权用户
+    await ensure_kb_permission(kb_id, current_user, "viewer", db)
     doc = await db.get(Document, doc_id)
     if not doc or doc.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -242,9 +259,12 @@ async def rename_document(
     kb_id: int,
     doc_id: int,
     req: RenameDocumentRequest,
+    current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Rename a document's display name."""
+    # 重命名是写操作，仅 owner / admin
+    await ensure_kb_permission(kb_id, current_user, "owner", db)
     doc = await db.get(Document, doc_id)
     if not doc or doc.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="Document not found")
