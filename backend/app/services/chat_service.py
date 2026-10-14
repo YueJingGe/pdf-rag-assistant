@@ -168,6 +168,9 @@ async def query_rag(
 
     chat_history: list[dict] = []
     if conversation_id:
+        # 归属校验：只能引用本人会话的历史（不存在/他人会话一律 404 防枚举）
+        # —— P0-1 遗留安全修复，经用户确认为本轮例外（区别于纯重构）
+        await get_own_conversation(db, conversation_id, user)
         result = await db.execute(
             select(Message)
             .where(Message.conversation_id == conversation_id)
