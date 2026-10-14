@@ -1,6 +1,6 @@
 # P0-3a Agent 工具基座（意图识别 + Function Calling + 工具调用循环）
 
-> 状态：**待确认**（2026-10-14 调研报告 7 项拍板 + 4 项补充已融入本文档；用户确认后进入实施）
+> 状态：**已确认**（2026-10-14 用户 review 通过：deep_qa 砍除 + 老端点回归口径明确化 + §12 增加白名单审计第 14 条 + §13 决策留痕规则；第 1 轮已实施，见 changelog）
 > 约束声明：本需求不触碰 RAG 禁区文件（loader/splitter/retrieval/vector_store/rag_chain），零新依赖
 
 ## 1. 背景

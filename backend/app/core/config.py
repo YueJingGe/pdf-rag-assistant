@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     chat_model: str = "glm-4v-flash"  # multimodal (images)
     chat_text_model: str = "glm-4-flash-250414"  # text-only with web_search support
 
+    # LLM (Agent - P0-3a，留空时回退 DeepSeek 配置；默认值经双模型 10 次工具冒烟对比后定稿，见需求 D1)
+    agent_model_name: str = ""
+    agent_model_base_url: str = ""
+    agent_model_api_key: str = ""
+
     # Embedding
     embedding_provider: str = "dashscope"  # "dashscope" or "huggingface"
     dashscope_api_key: str = ""

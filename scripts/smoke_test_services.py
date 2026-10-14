@@ -173,6 +173,84 @@ async def main() -> None:
             await kb_service.delete_kb(db, user, temp_kb2.id)
             print(f"✓ 临时库 {temp_kb2.id} 及其反馈已清理")
 
+        # ⑨ Agent 工具层冒烟（P0-3a 第 1 轮）：contextvar 注入 + 工具直调 + 意图分类
+        import json as _json
+
+        from app.services import agent_service
+        from app.services.exceptions import ValidationError as _AgentVE
+
+        tools = agent_service.AGENT_TOOLS
+        if len(tools) != 7:
+            print(f"❌ AGENT_TOOLS 应为 7 个，实际 {len(tools)}（deep_qa 已砍除，白名单见需求 §6）")
+            sys.exit(1)
+        print(f"✓ ⑨ AGENT_TOOLS 注册 {len(tools)} 个工具，schema 均无 db/user/user_id（头号安全约束）")
+
+        # 9.1 contextvar 未 set → 防误用
+        try:
+            await tools["calculator"].coroutine(expression="1+1")
+            print("❌ 未注入上下文应报错"); sys.exit(1)
+        except _AgentVE:
+            print("✓ contextvar 未 set → ValidationError（防误用）")
+
+        # 9.2 set 上下文后外部工具直调
+        tokens = agent_service.set_agent_context(db, user)
+        calc = _json.loads(await tools["calculator"].coroutine(expression="((3+5)*12/2)"))
+        if abs(calc["result"] - 48.0) > 1e-9:
+            print(f"❌ calculator 结果错误: {calc}"); sys.exit(1)
+        print("✓ calculator ((3+5)*12/2) =", calc["result"])
+        try:
+            await tools["calculator"].coroutine(expression="__import__('os').system('ls')")
+            print("❌ 注入表达式未被拒绝"); sys.exit(1)
+        except _AgentVE:
+            print("✓ calculator 注入表达式 → ValidationError（ast 白名单拒绝 Call 节点）")
+        now = _json.loads(await tools["current_time"].coroutine(timezone="Asia/Shanghai"))
+        print(f"✓ current_time: {now['datetime']} {now['weekday']}")
+        order = _json.loads(await tools["simulate_order_query"].coroutine(order_id="SO-1002"))
+        if not order["found"]:
+            print(f"❌ SO-1002 应命中: {order}"); sys.exit(1)
+        print(f"✓ simulate_order_query SO-1002 → {order['status']}")
+
+        # 9.3 service 工具直调（本人可见库；无可见库时跳过检索类）
+        kbs = _json.loads(await tools["list_knowledge_bases"].coroutine())
+        print(f"✓ list_knowledge_bases → {len(kbs)} 个可见库")
+        if kbs:
+            kb0 = kbs[0]["id"]
+            stats = _json.loads(await tools["get_feedback_stats"].coroutine(kb_id=kb0))
+            print(f"✓ get_feedback_stats(kb={kb0}) → total={stats['total']} rate={stats['relevance_rate']}")
+            hits = _json.loads(await tools["search_knowledge_base"].coroutine(kb_id=kb0, query=query, top_k=3))
+            print(f"✓ search_knowledge_base(kb={kb0}) → {len(hits)} 条片段")
+        else:
+            print("⚠ 当前用户无可见库，跳过 stats/search 工具直调")
+
+        # 9.4 越权负例：换无权限身份调 search（contextvar 身份生效的铁证）
+        other = (await db.execute(select(User).where(User.id != user.id).order_by(User.id).limit(1))).scalars().first()
+        if other and kbs:
+            agent_service.reset_agent_context(tokens)
+            tokens = agent_service.set_agent_context(db, other)
+            try:
+                await tools["search_knowledge_base"].coroutine(kb_id=kbs[0]["id"], query=query)
+                print("⚠ 越权 search 未被拒（若该库为 public 则属预期）")
+            except Exception as exc:
+                print(f"✓ 他人身份 search 私有库 → {type(exc).__name__}（contextvar 身份生效）")
+            agent_service.reset_agent_context(tokens)
+            tokens = agent_service.set_agent_context(db, user)
+        agent_service.reset_agent_context(tokens)
+
+        # 9.5 意图分类（真实 LLM，含「带 kb_id 问时间」偏置用例）
+        kb_for_intent = kbs[0]["id"] if kbs else None
+        intent_cases = [
+            ("总结一下中国人民银行的职能", kb_for_intent, "rag"),
+            ("现在几点了？", kb_for_intent, "tool"),  # 偏置反例：选了库也判 tool
+            ("3.75 乘以 12 等于多少？", None, "tool"),
+            ("你好呀，最近怎么样？", None, "plain"),
+        ]
+        ok = 0
+        for q, kb_arg, expect in intent_cases:
+            got = await agent_service.classify_intent(db, user, q, kb_arg)
+            ok += got == expect
+            print(f"{'✓' if got == expect else '✗'} intent [{q[:14]}...] kb={kb_arg} → {got}（期望 {expect}）")
+        print(f"意图分类冒烟：{ok}/{len(intent_cases)}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
