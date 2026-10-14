@@ -37,6 +37,7 @@
 - 💾 **语义缓存**：相似问题命中缓存，显著降低 API 调用成本
 - 🔐 **多租户隔离**：每个知识库独立 FAISS 索引，数据互不干扰
 - 🛡️ **鉴权与数据归属**：所有业务接口强制 JWT 认证（未登录 401），知识库/会话归属创建者，他人私有库 403 拒绝
+- 🧱 **Service 分层**：业务逻辑下沉 services/ 层，领域异常经全局 handler 统一转 HTTP（404/403/400/409），路由层只留参数注入与响应组装；service 函数可脱离 HTTP 直接调用（Agent 工具基座预演）
 
 ## 技术栈
 
@@ -74,6 +75,13 @@ pdf-rag-assistant/
 │   │   │   ├── retrieval.py        # 混合检索（向量 + BM25）
 │   │   │   ├── splitter.py         # 文本分块策略
 │   │   │   └── vector_store.py     # FAISS 向量存储管理
+│   │   ├── services/               # 业务服务层（P0-2，路由切薄后业务逻辑在此）
+│   │   │   ├── chat_service.py     # 会话/消息编排（SSE 生成器留路由层）
+│   │   │   ├── document_service.py # 文档上传/删除/索引重建编排
+│   │   │   ├── exceptions.py       # 领域异常（全局 handler 转 HTTP）
+│   │   │   ├── feedback_service.py # 检索反馈（创建/统计/导出）
+│   │   │   ├── kb_service.py       # 知识库 CRUD 与可见性过滤
+│   │   │   └── retrieval_service.py# 检索入口（P0-3 Agent 工具预演）
 │   │   ├── models/                 # 数据模型（SQLAlchemy ORM）
 │   │   │   ├── conversation.py     # 对话/消息模型
 │   │   │   ├── database.py         # 数据库连接
@@ -110,7 +118,8 @@ pdf-rag-assistant/
 │   └── vite.config.ts              # Vite 构建配置（含代理）
 ├── scripts/
 │   ├── rebuild_index.py            # 重建向量索引
-│   └── run_ragas_eval.py           # RAGAS 离线评估
+│   ├── run_ragas_eval.py           # RAGAS 离线评估
+│   └── smoke_test_services.py      # service 层冒烟测试（不经 HTTP 直接调 service）
 ├── .gitignore
 └── README.md
 ```

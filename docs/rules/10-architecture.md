@@ -43,7 +43,7 @@ api ──▶ services ──▶ core ──▶ models
 
 0. `services/exceptions.py` 是分层规则的**唯一例外**：它是零依赖纯契约模块（只定义异常类），`core/auth.py` 引用它以抛领域异常（P0-2 D1 决策）。除此之外 core 不得 import services。
 
-1. `services/` 层已于 P0-2 第 1 轮建立（exceptions / kb_service / retrieval_service），其余路由（documents/chat/feedback）仍在过渡期，随第 2、3 轮逐批迁移；未迁移路由的业务逻辑内联属**已知过渡态**，新代码不得再往路由里堆业务逻辑。
+1. `services/` 层已于 P0-2 三轮全部建立（exceptions / kb_service / retrieval_service / document_service / chat_service / feedback_service），kb/documents/chat/feedback 四个路由文件已全部切薄；例外：`/api/chat/upload-file` 保留路由层（纯外呼编排 + 502 语义不在领域异常体系，见 changelog 第 2 轮例外登记）、auth.py 未纳入抽取范围。新代码不得再往路由里堆业务逻辑。
 2. `core/auth.py` 是鉴权依赖（Depends 注入用），路由直接 import 它**不算违规**——它本质是 API 层的基础设施。
 3. 前端只有一个全局 api 实例（`services/api.ts`），新接口一律加在该文件，不另起 axios 实例（SSE 除外，走 `hooks/useSSE.ts` 的原生 fetch）。
 

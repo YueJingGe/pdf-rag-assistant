@@ -8,8 +8,8 @@
 ## 当前进度
 
 - ✅ **P0-1 鉴权强制执行 + 数据归属**（2026-10-13，基线 commit `f575eba`，范例：`docs/requirements/P0-1-auth.md`）
-- 🔨 **P0-2 service 层 抽取 + 异常分层**（进行中：第 2/3 轮完成，见 docs/changelog/P0-2-service-layer.md）
-- ⬜ P0-3 LLM 网关统一 + Agent 工具基座
+- ✅ **P0-2 service 层 抽取 + 异常分层**（2026-10-14 完成，三轮记录：docs/changelog/P0-2-service-layer.md；边界决策：docs/decisions/002-service-http-boundary.md）
+- ⬜ **P0-3 LLM 网关统一 + Agent 工具基座**（待启动；service 层已就绪，工具可直接调 service 函数，预演见 scripts/smoke_test_services.py）
 
 ## 🔴 核心工作流（每次新任务必须执行，逐条写死不可裁剪）
 

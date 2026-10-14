@@ -4,6 +4,54 @@
 
 ---
 
+## 2026-10-14 · 第 3 轮（收尾）：feedback_service + /feedback 权限补齐 + 全量终验 + 文档同步
+
+### 3a 纯重构（零行为变化）
+
+- **改动摘要**：feedback.py 3 端点切薄（123 → 82 行）；`feedback_service.py` 新建（create/get_stats/export）；冒烟脚本追加 ⑧ 段（临时库反馈全链路 + admin 内存标记验证导出）
+- **回归证据**：A POST 自己库 200 / 未登录 401 / stats 计数与 rate 逐字段一致 / B stats 403 / A（owner 非 admin）export 403「Admin required」/ 不存在 kb 404 detail 原样；冒烟 ⑧ 全绿（含 admin 绕过 owner 判定验证，is_admin 复核全部还原为 0）
+- **路由行数修正**：`create_feedback` 初版 16 行超限，参数合并压缩至 13 行（AST 统计通过）；终验额外项还发现首版统计脚本装饰器判断错误导致假阴性，修正后真实统计 24 个路由函数
+
+### 3b 安全修复（P0-1 遗留，经用户确认的例外；单独提交）
+
+- **问题**：`POST /api/feedback` 只校验登录、不校验 KB 权限——任何登录用户可对他人私有库写入反馈（污染 reranker 训练集）。git 考古确认 f575eba 基线即如此
+- **修复**：`feedback_service.create_feedback` 前置 `get_kb_or_raise(kb_id, user, "viewer", db)`
+- **回归证据**：B 对 A 私有库 POST → 403（修复前 200）；不存在 kb → 404；本人 → 200；测试脏数据（含修复前误写的越权行）已用 sqlite 清理并复核 0 残留
+
+### 全量终验（9+2 项，一次性，真命令真输出）
+
+| # | 项 | 结果 |
+|---|---|---|
+| 1 | openapi 模型类零改动 + paths 集合与基线一致（21 条） | ✅ |
+| 2 | 路由 29 不变 / 带锁端点 22/25 不变 | ✅ |
+| 3 | 禁区 5 文件累计 diff（4187ac4→HEAD）为空 | ✅ |
+| 4 | services 无 HTTP 符号（仅 exceptions.py 文档注释命中） | ✅ |
+| 5 | 权限矩阵 401/403/404 核心链回归 | ✅ |
+| 6 | py_compile 全量 + 前端零改动 + tsc exit=0 | ✅ |
+| 7 | SSE 端到端 conversation→retrieval_debug→token×40→citations→done | ✅ |
+| 8 | 冒烟 8 段全用例（kb/retrieval/document/chat/feedback） | ✅ |
+| 9 | P0-1 五项（401/登录路由/存量 3 库/CRUD/403） | ✅ |
+| 额外1 | 路由函数 ≤15 行（AST 统计 24 函数；豁免：auth×2 不在抽取范围、chat_stream D3 钦点、upload_file 已登记例外） | ✅ |
+| 额外2 | services import 审计同第 4 项 | ✅ |
+
+### 文档同步
+
+- README：核心亮点补「Service 分层」；目录结构补 services/ 六模块与 smoke 脚本
+- 重难点以及遇到的问题.md：新增「九、Service 层抽取改造」章节（动机/边界规则/4 个坑/终验方式）
+- AGENTS.md + 00-project-context：P0-2 ✅ 完成，P0-3 待启动（标注 service 层已就绪）
+- 10-architecture：现状声明更新为全部完成态（含 upload-file/auth 例外）
+- 新增 ADR-002（docs/decisions/002-service-http-boundary.md）：Service/HTTP 边界四条规则；ADR-003（双 commit 策略）经评估不写——一次性流程决策，changelog 分节已足够
+
+### P0-2 整体收尾摘要（三轮累计）
+
+- **services/ 六模块**：exceptions / kb_service / retrieval_service / document_service / chat_service / feedback_service
+- **四个路由文件切薄**：knowledge_bases 170→101、documents 279→125、chat 317→220、feedback 123→82
+- **禁区零改动**：loader/splitter/retrieval/vector_store/rag_chain 累计 diff 为空（4187ac4→HEAD）
+- **安全修复 2 处**（均独立 commit）：/api/chat/query 会话归属校验、POST /api/feedback KB 读权限
+- **关键决策**：D1-D6 全部落地；ADR-002 沉淀边界规则
+- **遗留（登记不处理）**：delete_kb 空目录残留；B 双禁区场景 403 先于 404（与原顺序一致）
+- **commit 链**：4187ac4（需求基线）→ ad93187（第 1 轮）→ 028f81a（第 2 轮重构）→ db965ab（第 2 轮安全修复）→ 本轮
+
 ## 2026-10-14 · 第 2 轮：document_service + chat_service + documents/chat 路由切换
 
 ### 2a 纯重构（严格零行为变化）
