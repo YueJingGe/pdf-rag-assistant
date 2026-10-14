@@ -1,8 +1,9 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.models.database import init_db
 import app.models.user  # noqa: F401 - ensure tables are registered
@@ -11,6 +12,13 @@ from app.api import knowledge_bases, documents, chat
 from app.api.auth import router as auth_router
 from app.api.feedback import router as feedback_router
 from app.core.config import settings
+from app.services.exceptions import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ServiceError,
+    ValidationError,
+)
 
 
 @asynccontextmanager
@@ -46,3 +54,22 @@ app.include_router(feedback_router)
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "service": "pdf-rag-assistant"}
+
+
+@app.exception_handler(ServiceError)
+async def service_error_handler(request: Request, exc: ServiceError) -> JSONResponse:
+    """统一将领域异常转换为 HTTP 响应（service 层只抛领域异常，不碰 HTTPException）。
+
+    响应体与 HTTPException 默认格式一致（{"detail": ...}），前端无感知。
+    """
+    if isinstance(exc, NotFoundError):
+        status_code = 404
+    elif isinstance(exc, PermissionDeniedError):
+        status_code = 403
+    elif isinstance(exc, ValidationError):
+        status_code = 400
+    elif isinstance(exc, ConflictError):
+        status_code = 409
+    else:
+        status_code = 500
+    return JSONResponse(status_code=status_code, content={"detail": exc.message})

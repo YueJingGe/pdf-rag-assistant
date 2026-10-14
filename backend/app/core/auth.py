@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.models.database import get_db
 from app.models.user import User, KnowledgeBasePermission
 from app.models.knowledge_base import KnowledgeBase
+from app.services.exceptions import NotFoundError, PermissionDeniedError
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -84,19 +85,13 @@ async def require_admin(
 ROLE_LEVELS = {"viewer": 1, "member": 2, "owner": 3}
 
 
-async def has_kb_permission(
+async def _has_kb_permission(
     kb: KnowledgeBase,
     user: User,
     required_role: str,
     db: AsyncSession,
 ) -> bool:
-    """判定用户对某个知识库是否具备 required_role 级别权限（纯判定，不抛异常）。
-
-    读权限（required_role 为 viewer/member）= owner || admin
-        || kb.permission == "public" || 存量无主(user_id IS NULL，视为公共可读)
-        || kb_permissions 表中存在授权记录且角色级别达标（含 owner 授权）
-    写权限（required_role == owner）= owner || admin
-    """
+    """KB 实体级权限判定（内部共享逻辑，供 has_kb_permission / get_kb_or_raise 复用）。"""
     if user.is_admin:
         return True
 
@@ -121,26 +116,64 @@ async def has_kb_permission(
     return ROLE_LEVELS.get(permission.role, 0) >= ROLE_LEVELS.get(required_role, 1)
 
 
+async def has_kb_permission(
+    kb_id: int,
+    user: User,
+    required_role: str,
+    db: AsyncSession,
+) -> bool:
+    """判定用户对指定 ID 的知识库是否具备 required_role 级别权限（纯判定，不抛异常）。
+
+    - kb_id 不存在时返回 False；需要区分「不存在 / 无权限」时用 get_kb_or_raise
+    - 读权限（viewer/member）= owner || admin || public || 存量无主 || 授权记录达标
+    - 写权限（owner）= owner || admin
+    """
+    kb = await db.get(KnowledgeBase, kb_id)
+    if not kb:
+        return False
+    return await _has_kb_permission(kb, user, required_role, db)
+
+
+async def get_kb_or_raise(
+    kb_id: int,
+    user: User,
+    required_role: str,
+    db: AsyncSession,
+) -> KnowledgeBase:
+    """加载知识库并校验权限，抛领域异常（service 层统一入口，见 ADR-001 与 P0-2 D1）。
+
+    - 知识库不存在：抛 NotFoundError（404，含防枚举语义）
+    - 无所需权限：抛 PermissionDeniedError（403）
+    - 通过则返回 KB 实体供调用方复用，不产生重复查询
+    """
+    kb = await db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise NotFoundError("Knowledge base not found")
+    if not await _has_kb_permission(kb, user, required_role, db):
+        raise PermissionDeniedError("No permission to access this knowledge base")
+    return kb
+
+
 async def ensure_kb_permission(
     knowledge_base_id: int,
     user: User,
     required_role: str,
     db: AsyncSession,
 ) -> KnowledgeBase:
-    """加载知识库并强制校验权限；通过则返回 KB 实体供路由复用。
+    """路由层薄封装：语义同 get_kb_or_raise，但抛 HTTPException（404/403）。
 
-    - 知识库不存在：抛 404
-    - 无所需权限：抛 403（读权限规则见 has_kb_permission）
+    仅供路由层特殊场景使用（不走全局 ServiceError handler 的路径）；
+    service 层禁止调用本函数（内部含 HTTPException，见 docs/rules/30-api-conventions.md）。
     """
-    kb = await db.get(KnowledgeBase, knowledge_base_id)
-    if not kb:
+    try:
+        return await get_kb_or_raise(knowledge_base_id, user, required_role, db)
+    except NotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Knowledge base not found",
         )
-    if not await has_kb_permission(kb, user, required_role, db):
+    except PermissionDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No permission to access this knowledge base",
         )
-    return kb

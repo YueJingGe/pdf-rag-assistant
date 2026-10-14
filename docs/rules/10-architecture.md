@@ -36,12 +36,14 @@ api ──▶ services ──▶ core ──▶ models
 |---|---|---|
 | `api/` | services、core.auth、models（仅过渡期）、Pydantic schemas | 直接写业务逻辑（超过 20 行的流转必须下沉 service） |
 | `services/` | core、models | import api；操作 HTTP 对象（Request/Response/HTTPException） |
-| `core/` | models、utils、第三方库 | import api / services |
+| `core/` | models、utils、第三方库、`services.exceptions`（唯一例外：零依赖纯契约，见下方说明） | import api / services（除上述例外） |
 | `models/` | 仅 SQLAlchemy 与标准库 | import 任何上层（**铁律**） |
 
 ## 现状声明（避免 AI 误判"不一致"）
 
-1. `services/` 层**尚不存在**（P0-2 建立）。当前业务逻辑内联在 `api/` 中是**已知的过渡态**，新代码不得再往路由里堆业务逻辑。
+0. `services/exceptions.py` 是分层规则的**唯一例外**：它是零依赖纯契约模块（只定义异常类），`core/auth.py` 引用它以抛领域异常（P0-2 D1 决策）。除此之外 core 不得 import services。
+
+1. `services/` 层已于 P0-2 第 1 轮建立（exceptions / kb_service / retrieval_service），其余路由（documents/chat/feedback）仍在过渡期，随第 2、3 轮逐批迁移；未迁移路由的业务逻辑内联属**已知过渡态**，新代码不得再往路由里堆业务逻辑。
 2. `core/auth.py` 是鉴权依赖（Depends 注入用），路由直接 import 它**不算违规**——它本质是 API 层的基础设施。
 3. 前端只有一个全局 api 实例（`services/api.ts`），新接口一律加在该文件，不另起 axios 实例（SSE 除外，走 `hooks/useSSE.ts` 的原生 fetch）。
 

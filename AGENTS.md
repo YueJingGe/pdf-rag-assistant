@@ -8,7 +8,7 @@
 ## 当前进度
 
 - ✅ **P0-1 鉴权强制执行 + 数据归属**（2026-10-13，基线 commit `f575eba`，范例：`docs/requirements/P0-1-auth.md`）
-- ⬜ **P0-2 service 层抽取 + 异常分层**（待启动）
+- 🔨 **P0-2 service 层抽取 + 异常分层**（进行中：第 1/3 轮完成，见 docs/changelog/P0-2-service-layer.md）
 - ⬜ P0-3 LLM 网关统一 + Agent 工具基座
 
 ## 🔴 核心工作流（每次新任务必须执行，逐条写死不可裁剪）
