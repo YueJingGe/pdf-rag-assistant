@@ -14,14 +14,16 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import hashlib
 import json
 import operator
 import time
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Callable, Literal, Optional
+from typing import AsyncIterator, Callable, Literal, Optional
 from zoneinfo import ZoneInfo
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
@@ -30,7 +32,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.user import User
 from app.services import chat_service, feedback_service, kb_service, retrieval_service
-from app.services.exceptions import ValidationError
+from app.services.exceptions import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from app.utils.logging import logger
 
 # ---------------------------------------------------------------------------
@@ -272,3 +279,130 @@ AGENT_TOOLS: dict = {
         _wrap_tool("simulate_order_query", "查询订单状态（Demo 模拟数据，订单号 SO-1001~SO-1003）", _OrderQueryArgs, _tool_order_query),
     )
 }
+
+
+# ---------------------------------------------------------------------------
+# Agent 循环（第 2 轮：补充 D 五种终止场景 + 双超时 + §9 可观测日志）
+# ---------------------------------------------------------------------------
+
+AGENT_SYSTEM_PROMPT = (
+    "你是智能助手，可以调用工具回答用户问题。规则：\n"
+    "1. 优先用最少的工具轮次完成任务，拿到足够信息后立即给出最终回答\n"
+    "2. 工具执行失败时换参数或换工具；不要用完全相同的参数反复重试\n"
+    "3. 用中文简洁回答"
+)
+
+MAX_TOOL_ROUNDS = 3      # D8：循环上限（§8 场景 ③）
+TOOL_TIMEOUT_S = 10.0    # D8：单工具超时，每个工具独立计时（§8 场景 ⑤）
+LLM_TIMEOUT_S = 15.0     # D10：LLM 单次决策超时，防 LLM 挂起卡死循环（提醒 2 双超时之二）
+FORCED_STOP_TEXT = "抱歉，无法完成该请求，请重新表述问题。"
+_TOKEN_CHUNK_CHARS = 24  # D10：最终回答伪流式切块大小（决策已完整生成后切块下发，见 changelog 决策补充）
+
+
+def _error_status(exc: Exception) -> str:
+    """领域异常 → tool_result 状态归类（连续同类错误计数依据）。"""
+    if isinstance(exc, PermissionDeniedError):
+        return "denied"
+    if isinstance(exc, NotFoundError):
+        return "not_found"
+    if isinstance(exc, ValidationError):
+        return "validation"
+    return "error"
+
+
+def _log_tool_call(user_id: int, round_no: int, name: str, args: dict, status: str, duration_ms: int) -> None:
+    """§9 可观测日志（单行 JSON：tool_name/params_hash/duration_ms/status/user_id/round）。"""
+    params_hash = hashlib.md5(json.dumps(args, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:8]
+    logger.info(
+        '[agent_tool] {"tool_name":"%s","params_hash":"%s","duration_ms":%d,"status":"%s","user_id":%d,"round":%d}',
+        name, params_hash, duration_ms, status, user_id, round_no,
+    )
+
+
+async def run_agent_loop(
+    question: str, chat_history: Optional[list[dict]] = None
+) -> AsyncIterator[tuple[str, dict]]:
+    """工具意图的 Agent 循环（async generator，产出 (event_type, payload) 二元组，由路由层转 SSE）。
+
+    终止场景（需求 §8）：①LLM 无 tool_calls 直接回答 ②工具→ToolMessage→再决策循环
+    ③达 MAX_TOOL_ROUNDS 上限强制终止 ④连续 2 次同类错误强制终止（工具异常/超时/
+    LLM 超时均计入）⑤单工具超时转述为观察结果由 LLM 决策下一步。
+    身份从 contextvar 取（头号安全约束）；调用前路由层必须已 set_agent_context。
+    """
+    _db, user = _require_agent_context()
+    llm = _get_agent_llm().bind_tools(list(AGENT_TOOLS.values()))
+    messages: list = [SystemMessage(content=AGENT_SYSTEM_PROMPT)]
+    for msg in (chat_history or [])[-6:]:  # 近 3 轮对话
+        if msg.get("role") == "user":
+            messages.append(HumanMessage(content=msg.get("content", "")))
+        else:
+            messages.append(AIMessage(content=msg.get("content", "")))
+    messages.append(HumanMessage(content=question))
+
+    consecutive_same_errors = 0
+    last_error_kind: Optional[str] = None
+
+    for round_no in range(1, MAX_TOOL_ROUNDS + 1):
+        # --- LLM 决策（15s 超时，超时计入连续错误计数） ---
+        try:
+            resp = await asyncio.wait_for(llm.ainvoke(messages), timeout=LLM_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            if last_error_kind == "llm_timeout":
+                consecutive_same_errors += 1
+            else:
+                consecutive_same_errors, last_error_kind = 1, "llm_timeout"
+            yield ("tool_result", {"name": "llm", "status": "timeout",
+                                   "duration_ms": int(LLM_TIMEOUT_S * 1000), "result_summary": "LLM 响应超时"})
+            if consecutive_same_errors >= 2:
+                yield ("token", {"content": FORCED_STOP_TEXT})
+                return
+            continue
+
+        tool_calls = resp.tool_calls or []
+        if not tool_calls:
+            # 场景 ①：最终回答（伪流式切块下发）
+            text = str(resp.content or "")
+            for i in range(0, len(text), _TOKEN_CHUNK_CHARS):
+                yield ("token", {"content": text[i:i + _TOKEN_CHUNK_CHARS]})
+            if not text:
+                yield ("token", {"content": "（模型未返回内容，请重试）"})
+            return
+
+        # --- 执行本轮全部工具（一轮可含多个 tool_calls，逐个独立 10s 超时） ---
+        messages.append(resp)  # AIMessage（含 tool_calls，与 ToolMessage 按 id 配对）
+        for tc in tool_calls:
+            name, args = tc["name"], dict(tc["args"] or {})
+            yield ("tool_call", {"name": name, "args_summary": json.dumps(args, ensure_ascii=False)[:120]})
+            start = time.perf_counter()
+            tool = AGENT_TOOLS.get(name)
+            if tool is None:
+                observation, status = f"未知工具：{name}", "error"
+            else:
+                try:
+                    observation = await asyncio.wait_for(tool.coroutine(**args), timeout=TOOL_TIMEOUT_S)
+                    status = "success"
+                except asyncio.TimeoutError:
+                    observation, status = f"工具 {name} 执行超时（>{TOOL_TIMEOUT_S:g}s）", "timeout"
+                except (NotFoundError, PermissionDeniedError, ValidationError, ConflictError) as exc:
+                    observation, status = f"工具执行被拒绝：{exc}", _error_status(exc)
+                except Exception as exc:  # noqa: BLE001 工具内部未知错误也转述给 LLM 决策
+                    observation, status = f"工具执行出错：{exc}", "error"
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            yield ("tool_result", {"name": name, "status": status,
+                                   "duration_ms": duration_ms, "result_summary": str(observation)[:200]})
+            _log_tool_call(user.id, round_no, name, args, status, duration_ms)
+            messages.append(ToolMessage(content=str(observation)[:4000], tool_call_id=tc["id"]))
+            if status == "success":
+                consecutive_same_errors, last_error_kind = 0, None
+            elif status == last_error_kind:
+                consecutive_same_errors += 1
+            else:
+                consecutive_same_errors, last_error_kind = 1, status
+
+        if consecutive_same_errors >= 2:
+            # 场景 ④：连续 2 次同类错误强制终止
+            yield ("token", {"content": FORCED_STOP_TEXT})
+            return
+
+    # 场景 ③：达到轮次上限仍未收敛
+    yield ("token", {"content": FORCED_STOP_TEXT})

@@ -223,7 +223,12 @@ async def main() -> None:
             print("⚠ 当前用户无可见库，跳过 stats/search 工具直调")
 
         # 9.4 越权负例：换无权限身份调 search（contextvar 身份生效的铁证）
-        other = (await db.execute(select(User).where(User.id != user.id).order_by(User.id).limit(1))).scalars().first()
+        # 排除 admin（is_admin=1 绕过 owner 判定，P0-3a admin 机制落地后必须排除，否则负例静默失效）
+        other = (
+            await db.execute(
+                select(User).where(User.id != user.id, User.is_admin == False).order_by(User.id).limit(1)  # noqa: E712
+            )
+        ).scalars().first()
         if other and kbs:
             agent_service.reset_agent_context(tokens)
             tokens = agent_service.set_agent_context(db, other)

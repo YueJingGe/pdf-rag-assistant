@@ -19,6 +19,7 @@ from app.services.exceptions import (
     ServiceError,
     ValidationError,
 )
+from app.utils.logging import logger
 
 
 @asynccontextmanager
@@ -26,6 +27,23 @@ async def lifespan(app: FastAPI):
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     settings.faiss_index_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
+    # P0-3a 附带项：ADMIN_USERNAMES 指定的用户启动时升权（只升不降，列表外不动，见需求 §10）
+    _admins = [u.strip() for u in (settings.admin_usernames or "").split(",") if u.strip()]
+    if _admins:
+        from sqlalchemy import false, update
+
+        from app.models.database import async_session_factory
+        from app.models.user import User
+
+        async with async_session_factory() as db:
+            result = await db.execute(
+                update(User)
+                .where(User.username.in_(_admins), User.is_admin == false())
+                .values(is_admin=True)
+            )
+            await db.commit()
+            if result.rowcount:
+                logger.info("[startup] admin promoted (%d rows): %s", result.rowcount, _admins)
     yield
 
 

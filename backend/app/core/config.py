@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     agent_model_base_url: str = ""
     agent_model_api_key: str = ""
 
+    # Admin (P0-3a 附带项)：启动时对列表内用户升权（只升不降，见需求 §10）
+    admin_usernames: str = ""
+
     # Embedding
     embedding_provider: str = "dashscope"  # "dashscope" or "huggingface"
     dashscope_api_key: str = ""
