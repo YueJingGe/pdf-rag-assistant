@@ -20,7 +20,9 @@ async def create_feedback(
     chunk_metadata: dict | None,
     is_relevant: bool,
 ) -> RetrievalFeedback:
-    """记录检索反馈。"""
+    """记录检索反馈（写操作需知识库读权限：public / 本人 / 授权用户）。"""
+    await get_kb_or_raise(knowledge_base_id, user, "viewer", db)
+
     feedback = RetrievalFeedback(
         message_id=message_id,
         knowledge_base_id=knowledge_base_id,
