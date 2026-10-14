@@ -12,10 +12,10 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.models.database import get_db
 from app.models.user import User
-from app.models.conversation import Conversation, Message
-from app.core.auth import require_user, ensure_kb_permission
-from app.core.rag_chain import rag_stream, rag_query, plain_chat_stream
+from app.core.auth import require_user
+from app.core.rag_chain import rag_stream, plain_chat_stream
 from app.core.config import settings
+from app.services import chat_service
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -39,18 +39,6 @@ class ConversationResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-async def _get_own_conversation(
-    conversation_id: int,
-    current_user: User,
-    db: AsyncSession,
-) -> Conversation:
-    """加载会话并校验归属；不存在或非本人会话一律 404（防止会话 ID 枚举探测）。"""
-    conversation = await db.get(Conversation, conversation_id)
-    if not conversation or conversation.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return conversation
-
-
 @router.post("/stream")
 async def chat_stream(
     req: ChatRequest,
@@ -60,41 +48,13 @@ async def chat_stream(
     # Determine if this is a plain chat (no KB) or RAG chat
     is_plain_chat = req.knowledge_base_id is None or req.knowledge_base_id == 0
 
-    if not is_plain_chat:
-        # RAG 模式校验知识库读权限；普通聊天无知识库归属，仅需登录
-        await ensure_kb_permission(req.knowledge_base_id, current_user, "viewer", db)
-
-    if req.conversation_id:
-        # 校验会话归属：只能在自己名下的会话里继续对话
-        conversation = await _get_own_conversation(req.conversation_id, current_user, db)
-    else:
-        conversation = Conversation(
-            knowledge_base_id=req.knowledge_base_id or 0,
-            title=req.question[:50],
-            user_id=current_user.id,
-        )
-        db.add(conversation)
-        await db.commit()
-        await db.refresh(conversation)
-
-    result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conversation.id)
-        .order_by(Message.created_at.desc())
-        .limit(10)
+    # 权限校验、会话获取/创建、历史加载、用户消息持久化下沉 chat_service（D3：SSE 事件组装留路由层）
+    conversation, chat_history = await chat_service.prepare_chat(
+        db, req.knowledge_base_id, req.question, req.conversation_id, current_user
     )
-    history_msgs = list(reversed(result.scalars().all()))
-    chat_history = [{"role": m.role, "content": m.content} for m in history_msgs]
-
-    user_msg = Message(
-        conversation_id=conversation.id,
-        role="user",
-        content=req.question,
-        images=req.images,
-        file_name=req.file_name,
+    await chat_service.save_user_message(
+        db, conversation.id, req.question, req.images, req.file_name
     )
-    db.add(user_msg)
-    await db.commit()
 
     async def event_generator():
         full_answer = ""
@@ -132,14 +92,7 @@ async def chat_stream(
                 elif chunk["type"] == "done":
                     yield {"event": "done", "data": json.dumps({"content": full_answer})}
 
-        assistant_msg = Message(
-            conversation_id=conversation.id,
-            role="assistant",
-            content=full_answer,
-            citations=citations,
-        )
-        db.add(assistant_msg)
-        await db.commit()
+        await chat_service.save_assistant_message(db, conversation.id, full_answer, citations)
 
     return EventSourceResponse(event_generator())
 
@@ -151,28 +104,9 @@ async def chat_query(
     db: AsyncSession = Depends(get_db),
 ):
     """Non-streaming RAG query for A/B testing."""
-    if req.knowledge_base_id:
-        # RAG 模式校验知识库读权限
-        await ensure_kb_permission(req.knowledge_base_id, current_user, "viewer", db)
-
-    chat_history: list[dict] = []
-    if req.conversation_id:
-        result = await db.execute(
-            select(Message)
-            .where(Message.conversation_id == req.conversation_id)
-            .order_by(Message.created_at.desc())
-            .limit(10) # 每次请求从数据库加载最近 10 条消息
-        )
-        history_msgs = list(reversed(result.scalars().all()))
-        chat_history = [{"role": m.role, "content": m.content} for m in history_msgs]
-
-    try:
-        response = await rag_query(
-            req.knowledge_base_id, req.question, chat_history, use_hyde=req.use_hyde
-        )
-        return response
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"RAG query failed: {str(exc)}")
+    return await chat_service.query_rag(
+        db, req.knowledge_base_id, req.question, req.conversation_id, req.use_hyde, current_user
+    )
 
 
 @router.get("/conversations/{kb_id}", response_model=list[ConversationResponse])
@@ -181,19 +115,8 @@ async def list_conversations(
     current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 普通聊天（kb_id=0）无知识库校验；RAG 模式校验读权限
-    if kb_id:
-        await ensure_kb_permission(kb_id, current_user, "viewer", db)
-    # 只返回当前用户自己的会话（会话归属隔离）
-    result = await db.execute(
-        select(Conversation)
-        .where(
-            Conversation.knowledge_base_id == kb_id,
-            Conversation.user_id == current_user.id,
-        )
-        .order_by(Conversation.created_at.desc())
-    )
-    return result.scalars().all()
+    # 普通聊天（kb_id=0）无知识库校验；RAG 模式校验读权限（编排在 chat_service）
+    return await chat_service.list_conversations(db, kb_id, current_user)
 
 
 @router.get("/messages/{conversation_id}")
@@ -202,26 +125,8 @@ async def get_messages(
     current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 只能读取本人会话的消息历史
-    await _get_own_conversation(conversation_id, current_user, db)
-    result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.asc())
-    )
-    messages = result.scalars().all()
-    return [
-        {
-            "id": m.id,
-            "role": m.role,
-            "content": m.content,
-            "images": m.images,
-            "file_name": m.file_name,
-            "citations": m.citations,
-            "created_at": m.created_at.isoformat(),
-        }
-        for m in messages
-    ]
+    # 只能读取本人会话的消息历史（编排在 chat_service）
+    return await chat_service.get_messages(db, conversation_id, current_user)
 
 
 @router.delete("/conversations/{conversation_id}")
@@ -230,11 +135,8 @@ async def delete_conversation(
     current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 只能删除本人会话
-    conversation = await _get_own_conversation(conversation_id, current_user, db)
-    await db.execute(sa_delete(Message).where(Message.conversation_id == conversation_id))
-    await db.delete(conversation)
-    await db.commit()
+    # 只能删除本人会话（编排在 chat_service）
+    await chat_service.delete_conversation(db, conversation_id, current_user)
     return {"detail": "Conversation deleted"}
 
 

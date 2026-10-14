@@ -20,9 +20,10 @@ os.chdir(BACKEND_DIR)
 
 from sqlalchemy import select  # noqa: E402
 
+from app.models.conversation import Conversation  # noqa: E402
 from app.models.database import async_session_factory  # noqa: E402
 from app.models.user import User  # noqa: E402
-from app.services import kb_service, retrieval_service  # noqa: E402
+from app.services import chat_service, document_service, kb_service, retrieval_service  # noqa: E402
 from app.services.exceptions import NotFoundError  # noqa: E402
 
 
@@ -65,6 +66,59 @@ async def main() -> None:
             sys.exit(1)
         except NotFoundError as e:
             print(f"✓ 不存在的 kb_id → NotFoundError: {e.message}")
+
+        # ⑤ document_service 冒烟（P0-2 第 2 轮）：临时库全链路 上传→列表→检索→改名→清理
+        temp_kb = await kb_service.create_kb(
+            db, user, name="smoke-doc-temp", description="冒烟临时库", permission="private"
+        )
+        try:
+            content = ("SMOKE_DOC_MARKER_P02：无人机集群协同通信冒烟测试内容。\n" * 5).encode("utf-8")
+            doc = await document_service.upload_document(
+                db, user, temp_kb.id, filename="smoke_doc.txt", content=content
+            )
+            print(f"✓ document_service.upload_document → doc_id={doc.id} status={doc.status} chunks={doc.chunk_count}")
+
+            docs = await document_service.list_documents(db, user, temp_kb.id)
+            print(f"✓ document_service.list_documents → {len(docs)} 篇")
+
+            hits = await retrieval_service.search(
+                temp_kb.id, "SMOKE_DOC_MARKER_P02 协同通信", top_k=2, db=db, user=user
+            )
+            print(f"✓ 新上传文档可检索 → {len(hits)} 个片段")
+
+            renamed = await document_service.rename_document(
+                db, user, temp_kb.id, doc.id, "smoke_renamed.txt"
+            )
+            print(f"✓ document_service.rename_document → {renamed.filename}")
+        finally:
+            await kb_service.delete_kb(db, user, temp_kb.id)
+            print(f"✓ 临时库 {temp_kb.id} 已清理")
+
+        # ⑥ chat_service 冒烟（P0-2 第 2 轮）：普通聊天会话生命周期 创建→归属校验→消息→清理
+        conversation, chat_history = await chat_service.prepare_chat(
+            db, None, "冒烟测试问题", None, user
+        )
+        print(f"✓ chat_service.prepare_chat（普通聊天）→ 新会话 id={conversation.id}")
+        await chat_service.save_user_message(db, conversation.id, "冒烟测试问题", None, None)
+        own = await chat_service.get_own_conversation(db, conversation.id, user)
+        print(f"✓ chat_service.get_own_conversation → 会话 {own.id} 归属校验通过")
+        await chat_service.delete_conversation(db, conversation.id, user)
+        print(f"✓ chat_service.delete_conversation → 会话 {conversation.id} 已删除")
+
+        # ⑦ 会话防枚举（D2）：他人会话/不存在会话一律 NotFoundError（404，而非 403）
+        other = (
+            await db.execute(
+                select(Conversation).where(Conversation.user_id != user.id).limit(1)
+            )
+        ).scalars().first()
+        probe_id = other.id if other else 999999
+        label = f"他人会话（id={probe_id}）" if other else "不存在会话（id=999999）"
+        try:
+            await chat_service.get_own_conversation(db, probe_id, user)
+            print("❌ 预期 NotFoundError 未抛出")
+            sys.exit(1)
+        except NotFoundError:
+            print(f"✓ {label} → NotFoundError（404 防枚举）")
 
 
 if __name__ == "__main__":
