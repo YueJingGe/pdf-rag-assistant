@@ -153,6 +153,34 @@ async def _rebuild_kb_index(db: AsyncSession, kb_id: int) -> None:
     semantic_cache.invalidate(kb_id)
 
 
+def _load_content_from_chunks(kb_id: int, source_filename: str) -> dict | None:
+    """优先从 FAISS docstore 取已解析 chunks 拼全文（与检索/引用同源）。
+
+    避免 viewer 打开时对原文档现场重新解析——扫描件 PDF 每次都重跑 OCR
+    （11 页 15s+）且同步阻塞事件循环；chunks 是入库时的解析结果，读
+    docstore 毫秒级，且与引用段落同源，高亮匹配率更高。
+    索引缺失 / 无匹配 chunk 时返回 None，由调用方走 load_document 兑底。
+    """
+    store = vector_store_manager.get_store(kb_id)
+    if store is None:
+        return None
+    chunks = []
+    for doc in getattr(store.docstore, "_dict", {}).values():
+        meta = doc.metadata or {}
+        stored = str(meta.get("source_filename") or meta.get("source") or "")
+        if stored == source_filename or source_filename in stored:
+            chunks.append(
+                (meta.get("page") or 0, meta.get("chunk_index") or 0, doc.page_content)
+            )
+    if not chunks:
+        return None
+    chunks.sort(key=lambda t: (t[0], t[1]))
+    return {
+        "content": "\n\n".join(t[2] for t in chunks),
+        "page_count": len({t[0] for t in chunks}),
+    }
+
+
 async def get_document_by_source(
     db: AsyncSession, user: User, kb_id: int, source_filename: str
 ) -> dict:
@@ -175,6 +203,11 @@ async def get_document_by_source(
     if not target_doc:
         raise NotFoundError("Document not found by source filename")
 
+    # 优先读已解析 chunks（毫秒级）；索引不可用时兑底重新解析原文档
+    chunks_result = _load_content_from_chunks(kb_id, source_filename)
+    if chunks_result is not None:
+        return {"filename": target_doc.filename, **chunks_result}
+
     try:
         raw_docs = load_document(target_doc.file_path)
         content = "\n\n".join(d.page_content for d in raw_docs)
@@ -192,6 +225,12 @@ async def get_document_content(
     doc = await db.get(Document, doc_id)
     if not doc or doc.knowledge_base_id != kb_id:
         raise NotFoundError("Document not found")
+
+    # 优先读已解析 chunks（同 get_document_by_source，避免扫描件 PDF 现场 OCR）
+    display_name = Path(doc.file_path).name
+    chunks_result = _load_content_from_chunks(kb_id, display_name)
+    if chunks_result is not None:
+        return {"filename": doc.filename, **chunks_result}
 
     try:
         raw_docs = load_document(doc.file_path)
