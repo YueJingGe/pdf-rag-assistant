@@ -171,6 +171,7 @@ def _wrap_service_tool(name, description, args_model, coro) -> StructuredTool:
 | D6 | admin 机制 | 纳入 3a 附带项，`ADMIN_USERNAMES` 配置化，只升权不降权 |
 | D7 | simulate_order_query | 加，标注 Demo 叙事用非核心，时间紧可砍 |
 | D8 | 循环上限 | 3 轮；工具超时 10s；连续 2 次同类错误强制终止（§8） |
+| D19 | search 工具可达性 | 分类器优先（方案 A，2026-10-14 拍板）：search 为"混合任务备用工具"，主检索路径由 RAG 覆盖；第 3 轮验收实证"查资料"类问题在 HTTP 层稳定路由 RAG（search 结构性不可达属设计取舍非 bug）；P0-3b 网关统一时重新评估"是否让 LLM 自主决定检索" |
 
 **实施中发现的补充决策**：实施过程中如产生新的边界决策，登记在 changelog 对应轮次的「决策补充」节，D 编号延续 §13（D9、D10...）；发现问题先问用户，不擅自扩大范围。
 
