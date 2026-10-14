@@ -61,52 +61,59 @@ export default function DocumentViewer({ open, onClose, knowledgeBaseId, filenam
     }
   }, [content, snippet]);
 
+  // 归一化定位：OCR 文本含连续空格/换行/字间空格，且引用链路可能引入全半角标点差异，
+  // 裸 indexOf 必然失配（md 能命中、扫描件 PDF 永远不中的根因）。
+  // 把 content 折叠到强归一化空间（去空白 + 去标点，只留语义字符）后与 snippet 同规则匹配，
+  // 再经 map 数组映射回原串位置切片高亮。
+  const locateSnippet = (source: string, target: string): [number, number] | null => {
+    // 防御：剔除回答正文里附带的引用标注尾巴
+    const cleaned = target.replace(/\s*\[来源:[^\]]*\]\s*/g, ' ');
+    const parts: string[] = [];
+    const map: number[] = [];
+    for (let i = 0; i < source.length; i++) {
+      const ch = source[i];
+      if (/\s/.test(ch)) continue;
+      // 全半角标点一律不参与匹配（两侧同规则，不影响定位语义）
+      if (/[\p{P}\p{S}]/u.test(ch)) continue;
+      parts.push(ch);
+      map.push(i);
+    }
+    const norm = parts.join('');
+
+    const probeRaw = cleaned.replace(/[\p{P}\p{S}\s]/gu, '');
+    let probe = probeRaw.slice(0, 60);
+    let idx = norm.indexOf(probe);
+    if (idx === -1) {
+      probe = probeRaw.slice(0, 30);
+      idx = norm.indexOf(probe);
+    }
+    if (idx === -1 || probe.length === 0) return null;
+
+    const start = map[idx];
+    const end = map[Math.min(idx + probe.length - 1, map.length - 1)] + 1;
+    return [start, end];
+  };
+
   const renderContent = () => {
     if (loading) return <Spin style={{ display: 'block', margin: '40px auto' }} />;
     if (!content) return <Empty description="无法加载文档内容" />;
 
-    // Find and highlight the snippet in the content
-    const snippetClean = snippet.replace(/\s+/g, ' ').trim().slice(0, 60);
-    const matchIndex = content.indexOf(snippetClean);
-
-    if (matchIndex === -1) {
-      // Fallback: try matching first 30 chars
-      const shortSnippet = snippet.replace(/\s+/g, ' ').trim().slice(0, 30);
-      const fallbackIndex = content.indexOf(shortSnippet);
-
-      if (fallbackIndex === -1) {
-        return (
-          <div className={styles.docContent}>
-            <pre className={styles.preText}>{content}</pre>
-          </div>
-        );
-      }
-
-      const before = content.slice(0, fallbackIndex);
-      const matched = content.slice(fallbackIndex, fallbackIndex + snippet.length);
-      const after = content.slice(fallbackIndex + snippet.length);
-
+    const range = locateSnippet(content, snippet);
+    if (!range) {
       return (
         <div className={styles.docContent}>
-          <pre className={styles.preText}>
-            {before}
-            <span ref={highlightRef} className={styles.highlight}>{matched}</span>
-            {after}
-          </pre>
+          <pre className={styles.preText}>{content}</pre>
         </div>
       );
     }
 
-    const before = content.slice(0, matchIndex);
-    const matched = content.slice(matchIndex, matchIndex + snippet.length);
-    const after = content.slice(matchIndex + snippet.length);
-
+    const [start, end] = range;
     return (
       <div className={styles.docContent}>
         <pre className={styles.preText}>
-          {before}
-          <span ref={highlightRef} className={styles.highlight}>{matched}</span>
-          {after}
+          {content.slice(0, start)}
+          <span ref={highlightRef} className={styles.highlight}>{content.slice(start, end)}</span>
+          {content.slice(end)}
         </pre>
       </div>
     );
