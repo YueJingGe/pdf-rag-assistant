@@ -92,6 +92,19 @@ export interface RetrievalDebug {
   strategy: string;
 }
 
+// ---- P0-3a Agent 事件类型（/api/chat/agent/stream 新增 SSE 事件） ----
+export type AgentIntent = "rag" | "tool" | "plain";
+
+/** 工具调用轨迹项：tool_call 创建（running），tool_result 回填状态与耗时 */
+export interface ToolTraceItem {
+  name: string;
+  argsSummary: string;
+  status: "running" | "success" | "timeout" | "denied" | "not_found" | "validation" | "error";
+  durationMs: number | null;
+  round: number;
+  resultSummary?: string;
+}
+
 export interface FeedbackStats {
   total: number;
   relevant: number;

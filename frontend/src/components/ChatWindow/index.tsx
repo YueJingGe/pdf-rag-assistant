@@ -38,11 +38,13 @@ import remarkGfm from "remark-gfm";
 import { useSSE } from "../../hooks/useSSE";
 import CitationView, { type CitationClickInfo } from "../CitationView";
 import RetrievalDebugPanel from "../RetrievalDebugPanel";
+import AgentToolLog from "../AgentToolLog";
 import {
   chatApi,
   type Citation,
   type RetrievalDebug,
   type ConversationInfo,
+  type ToolTraceItem,
 } from "../../services/api";
 import styles from "./index.module.less";
 
@@ -73,6 +75,7 @@ interface MessageItem {
   fileName?: string; // attached file name for display
   citations?: Citation[];
   retrievalDebug?: RetrievalDebug | null;
+  toolTraces?: ToolTraceItem[]; // P0-3a：Agent 工具调用轨迹（后端未持久化，历史恢复时无此数据）
 }
 
 interface Props {
@@ -98,6 +101,7 @@ export default function ChatWindow({
   const [inputValue, setInputValue] = useState("");
   const [useHyde, setUseHyde] = useState(false);
   const [useWebSearch, setUseWebSearch] = useState(false);
+  const [useAgentMode, setUseAgentMode] = useState(false); // P0-3a：Agent 模式开关（默认关，实验性入口）
   const [showDebug, setShowDebug] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [conversations, setConversations] = useState<ConversationInfo[]>([]);
@@ -298,6 +302,7 @@ export default function ChatWindow({
       fileContent: fileToSend?.content,
       fileName: fileToSend?.filename,
       webSearch: useWebSearch,
+      useAgent: useAgentMode,
     });
   };
 
@@ -310,6 +315,7 @@ export default function ChatWindow({
           content: sse.content,
           citations: sse.citations,
           retrievalDebug: sse.retrievalDebug,
+          toolTraces: sse.toolEvents.length > 0 ? sse.toolEvents : undefined,
         },
       ]);
     }
@@ -325,6 +331,15 @@ export default function ChatWindow({
           {isPlainChat ? "普通聊天" : knowledgeBaseName || "智能问答"}
         </Typography.Title>
         <Space>
+          <Tooltip title="Agent 模式：意图分类后自动调用工具（计算/时间/知识库检索等）">
+            <Switch
+              checkedChildren="Agent"
+              unCheckedChildren="标准"
+              checked={useAgentMode}
+              onChange={setUseAgentMode}
+              size="small"
+            />
+          </Tooltip>
           <Tooltip title="新建对话（清除上下文，节省 Token）">
             <Button
               icon={<PlusOutlined />}
@@ -467,6 +482,7 @@ export default function ChatWindow({
             <div className={styles.bubble}>
               {msg.role === "assistant" ? (
                 <>
+                  {msg.toolTraces && <AgentToolLog items={msg.toolTraces} compact />}
                   <div className={styles.markdownContent}>
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {msg.content}
@@ -544,6 +560,9 @@ export default function ChatWindow({
               style={{ backgroundColor: "#52c41a", flexShrink: 0 }}
             />
             <div className={styles.bubble}>
+              {sse.toolEvents.length > 0 && (
+                <AgentToolLog items={sse.toolEvents} compact />
+              )}
               {sse.content ? (
                 <div className={styles.markdownContent}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>

@@ -295,6 +295,7 @@ AGENT_SYSTEM_PROMPT = (
 MAX_TOOL_ROUNDS = 3      # D8：循环上限（§8 场景 ③）
 TOOL_TIMEOUT_S = 10.0    # D8：单工具超时，每个工具独立计时（§8 场景 ⑤）
 LLM_TIMEOUT_S = 15.0     # D10：LLM 单次决策超时，防 LLM 挂起卡死循环（提醒 2 双超时之二）
+MAX_TOOL_CALLS_PER_ROUND = 10  # D16：单轮 tool_calls 数上限（§8 语义澄清：轮次上限 ≠ 调用次数上限，防 LLM 异常时爆炸）
 FORCED_STOP_TEXT = "抱歉，无法完成该请求，请重新表述问题。"
 _TOKEN_CHUNK_CHARS = 24  # D10：最终回答伪流式切块大小（决策已完整生成后切块下发，见 changelog 决策补充）
 
@@ -359,6 +360,14 @@ async def run_agent_loop(
             continue
 
         tool_calls = resp.tool_calls or []
+        if len(tool_calls) > MAX_TOOL_CALLS_PER_ROUND:
+            # D16：单轮调用数超限——只执行前 10 个；被丢弃的 tool_call_id 仍须回填
+            # ToolMessage（协议要求每个 tool_call 必须有响应，否则下轮请求报错）
+            for dropped in tool_calls[MAX_TOOL_CALLS_PER_ROUND:]:
+                messages.append(ToolMessage(
+                    content=f"Error: 本轮工具调用数超上限({MAX_TOOL_CALLS_PER_ROUND})，此调用未执行",
+                    tool_call_id=dropped["id"]))
+            tool_calls = tool_calls[:MAX_TOOL_CALLS_PER_ROUND]
         if not tool_calls:
             # 场景 ①：最终回答（伪流式切块下发）
             text = str(resp.content or "")
@@ -372,7 +381,7 @@ async def run_agent_loop(
         messages.append(resp)  # AIMessage（含 tool_calls，与 ToolMessage 按 id 配对）
         for tc in tool_calls:
             name, args = tc["name"], dict(tc["args"] or {})
-            yield ("tool_call", {"name": name, "args_summary": json.dumps(args, ensure_ascii=False)[:120]})
+            yield ("tool_call", {"name": name, "args_summary": json.dumps(args, ensure_ascii=False)[:120], "round": round_no})
             start = time.perf_counter()
             tool = AGENT_TOOLS.get(name)
             if tool is None:
@@ -389,7 +398,8 @@ async def run_agent_loop(
                     observation, status = f"工具执行出错：{exc}", "error"
             duration_ms = int((time.perf_counter() - start) * 1000)
             yield ("tool_result", {"name": name, "status": status,
-                                   "duration_ms": duration_ms, "result_summary": str(observation)[:200]})
+                                   "duration_ms": duration_ms, "result_summary": str(observation)[:200],
+                                   "round": round_no})
             _log_tool_call(user.id, round_no, name, args, status, duration_ms)
             messages.append(ToolMessage(content=str(observation)[:4000], tool_call_id=tc["id"]))
             if status == "success":

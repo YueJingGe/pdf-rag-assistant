@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import type { Citation, RetrievalDebug } from '../services/api';
+import type { AgentIntent, Citation, RetrievalDebug, ToolTraceItem } from '../services/api';
 
 interface SSEState {
   loading: boolean;
@@ -8,6 +8,9 @@ interface SSEState {
   conversationId: number | null;
   retrievalDebug: RetrievalDebug | null;
   error: string | null;
+  // P0-3a Agent 模式新增：意图分类结果与工具调用轨迹
+  intent: AgentIntent | null;
+  toolEvents: ToolTraceItem[];
 }
 
 interface SendOptions {
@@ -19,6 +22,7 @@ interface SendOptions {
   fileContent?: string;  // extracted text from uploaded file
   fileName?: string;  // original filename
   webSearch?: boolean;  // enable web search for plain chat
+  useAgent?: boolean;  // P0-3a：走 /api/chat/agent/stream（意图分类 + 工具调用）
 }
 
 export function useSSE() {
@@ -29,11 +33,13 @@ export function useSSE() {
     conversationId: null,
     retrievalDebug: null,
     error: null,
+    intent: null,
+    toolEvents: [],
   });
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(async (options: SendOptions) => {
-    const { knowledgeBaseId, question, conversationId, useHyde = false, images, fileContent, fileName, webSearch } = options;
+    const { knowledgeBaseId, question, conversationId, useHyde = false, images, fileContent, fileName, webSearch, useAgent = false } = options;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -41,6 +47,7 @@ export function useSSE() {
     setState({
       loading: true, content: '', citations: [],
       conversationId: conversationId ?? null, retrievalDebug: null, error: null,
+      intent: null, toolEvents: [],
     });
 
     try {
@@ -65,12 +72,15 @@ export function useSSE() {
         body.web_search = true;
       }
 
-      const response = await fetch('/api/chat/stream', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
+      const response = await fetch(
+        useAgent ? '/api/chat/agent/stream' : '/api/chat/stream',
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        }
+      );
 
       // SSE 走原生 fetch 不经过 axios 拦截器，401 需单独广播登录过期事件
       if (response.status === 401) {
@@ -128,6 +138,46 @@ export function useSSE() {
                 break;
               case 'retrieval_debug':
                 setState((prev) => ({ ...prev, retrievalDebug: data }));
+                break;
+              case 'intent':
+                if (data.intent === 'rag' || data.intent === 'tool' || data.intent === 'plain') {
+                  setState((prev) => ({ ...prev, intent: data.intent }));
+                }
+                break;
+              case 'tool_call':
+                if (data.name) {
+                  setState((prev) => ({
+                    ...prev,
+                    toolEvents: [...prev.toolEvents, {
+                      name: data.name,
+                      argsSummary: data.args_summary || '',
+                      status: 'running',
+                      durationMs: null,
+                      round: data.round ?? 0,
+                    }],
+                  }));
+                }
+                break;
+              case 'tool_result':
+                if (data.name) {
+                  setState((prev) => {
+                    // 回填最后一个同名 running 项（tool_call → tool_result 成对按序到达）
+                    const events = [...prev.toolEvents];
+                    for (let i = events.length - 1; i >= 0; i--) {
+                      if (events[i].name === data.name && events[i].status === 'running') {
+                        events[i] = {
+                          ...events[i],
+                          status: data.status ?? 'error',
+                          durationMs: data.duration_ms ?? null,
+                          resultSummary: data.result_summary || '',
+                          round: data.round ?? events[i].round,
+                        };
+                        break;
+                      }
+                    }
+                    return { ...prev, toolEvents: events };
+                  });
+                }
                 break;
               case 'done':
                 setState((prev) => ({ ...prev, loading: false }));
