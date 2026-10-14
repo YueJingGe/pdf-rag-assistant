@@ -23,7 +23,7 @@ from sqlalchemy import select  # noqa: E402
 from app.models.conversation import Conversation  # noqa: E402
 from app.models.database import async_session_factory  # noqa: E402
 from app.models.user import User  # noqa: E402
-from app.services import chat_service, document_service, kb_service, retrieval_service  # noqa: E402
+from app.services import chat_service, document_service, feedback_service, kb_service, retrieval_service  # noqa: E402
 from app.services.exceptions import NotFoundError  # noqa: E402
 
 
@@ -119,6 +119,59 @@ async def main() -> None:
             sys.exit(1)
         except NotFoundError:
             print(f"✓ {label} → NotFoundError（404 防枚举）")
+
+        # ⑧ feedback_service 冒烟（P0-2 第 3 轮）：临时库上 创建→统计→导出→清理
+        from sqlalchemy import delete as sa_delete  # noqa: E402
+        from app.models.feedback import RetrievalFeedback  # noqa: E402
+
+        temp_kb2 = await kb_service.create_kb(
+            db, user, name="smoke-fb-temp", description="反馈冒烟临时库", permission="private"
+        )
+        try:
+            fb = await feedback_service.create_feedback(
+                db, user,
+                message_id=0,
+                knowledge_base_id=temp_kb2.id,
+                question="冒烟问题",
+                chunk_content="冒烟片段",
+                chunk_metadata=None,
+                is_relevant=True,
+            )
+            print(f"✓ feedback_service.create_feedback → id={fb.id}")
+
+            stats = await feedback_service.get_feedback_stats(db, user, temp_kb2.id)
+            print(f"✓ feedback_service.get_feedback_stats → total={stats['total']} rate={stats['relevance_rate']}")
+
+            rows = await feedback_service.export_feedback(db, user, temp_kb2.id)
+            print(f"✓ feedback_service.export_feedback（owner）→ {len(rows)} 条")
+
+            try:
+                await feedback_service.get_feedback_stats(db, user, 999999)
+                print("❌ 预期 NotFoundError 未抛出")
+                sys.exit(1)
+            except NotFoundError:
+                print("✓ 不存在 kb 的 stats → NotFoundError（404）")
+
+            # admin 身份导出（admin 对任意库 owner 判定恒过——export 双重校验的 service 侧验证）
+            # 存量库可能无 is_admin 用户：用内存临时标记验证，不落库
+            admin_user = (
+                await db.execute(select(User).where(User.is_admin == True).limit(1))  # noqa: E712
+            ).scalars().first()
+            temp_flag = False
+            if not admin_user:
+                admin_user = (await db.execute(select(User).order_by(User.id).limit(1))).scalars().first()
+                admin_user.is_admin = True  # 仅内存标记，不提交
+                temp_flag = True
+            admin_rows = await feedback_service.export_feedback(db, admin_user, temp_kb2.id)
+            note = "，内存临时标记已还原" if temp_flag else ""
+            print(f"✓ admin 身份 export_feedback → {len(admin_rows)} 条（admin 绕过 owner 判定{note}）")
+            if temp_flag:
+                admin_user.is_admin = False
+        finally:
+            await db.execute(sa_delete(RetrievalFeedback).where(RetrievalFeedback.knowledge_base_id == temp_kb2.id))
+            await db.commit()
+            await kb_service.delete_kb(db, user, temp_kb2.id)
+            print(f"✓ 临时库 {temp_kb2.id} 及其反馈已清理")
 
 
 if __name__ == "__main__":
