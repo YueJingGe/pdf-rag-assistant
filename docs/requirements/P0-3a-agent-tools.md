@@ -1,6 +1,6 @@
 # P0-3a Agent 工具基座（意图识别 + Function Calling + 工具调用循环）
 
-> 状态：**已确认**（2026-10-14 用户 review 通过：deep_qa 砍除 + 老端点回归口径明确化 + §12 增加白名单审计第 14 条 + §13 决策留痕规则；第 1 轮已实施，见 changelog）
+> 状态：**已确认**（2026-10-14 用户 review 通过：deep_qa 砍除 + 老端点回归口径明确化 + §12 增加白名单审计第 14 条 + §13 决策留痕规则；第 1 轮已实施，见 changelog；第 3 轮前用户拍板修订：§12.4 扩为 12 用例（+2 plain）、§8 补"轮次 vs 单轮 tool_calls 数"语义）
 > 约束声明：本需求不触碰 RAG 禁区文件（loader/splitter/retrieval/vector_store/rag_chain），零新依赖
 
 ## 1. 背景
@@ -114,6 +114,8 @@ def _wrap_service_tool(name, description, args_model, coro) -> StructuredTool:
 | 4 | 工具抛领域异常（NotFound/PermissionDenied 等） | **异常信息转述给 LLM 作为观察结果**（让 LLM 决定下一步，如换参数重试或告知用户无权限）；**连续 2 次同类错误强制终止**（终止场景 3 行为） |
 | 5 | 单工具执行超时（**10s**，asyncio.wait_for） | 超时转述"工具执行超时"给 LLM 作为观察结果，由 LLM 决定下一步；超时也计入场景 4 的同类错误计数 |
 
+> **语义澄清（第 3 轮前修订，D16）**："3 轮上限"指 **LLM 决策轮次上限**（`MAX_TOOL_ROUNDS=3`），不是工具调用次数上限；单轮返回的 `tool_calls` 数上限为 **10**（`MAX_TOOL_CALLS_PER_ROUND=10`）——超出时本轮只执行前 10 个，其余不执行并向 LLM 回填"调用数超限未执行"（ToolMessage，满足协议中每个 tool_call 必须有响应的约束）。最坏耗时受三层封顶：3 轮 × 10 次 × 单工具 10s ≈ 300s（正常 LLM 行为每轮 1~2 个工具，实际远低于此）。第 2 轮场景③实测：3 轮决策内 LLM 并发调用 24 次工具，印证需要单轮调用数上限。
+
 每轮工具调用与终止原因均落可观测日志（§9）。
 
 ## 9. 可观测性（补充 C，3a 最小化）
@@ -143,7 +145,7 @@ def _wrap_service_tool(name, description, args_model, coro) -> StructuredTool:
 1. **禁区零改动**：`git diff --stat` 自基线 commit 起，禁区 5 文件不出现
 2. **contextvar 安全约束落地（补充 A 审计）**：AST/grep 审计工具函数签名与 args_schema——**无任何 `user_id` / `db` 参数**；7 个工具全部经 `_wrap_service_tool` 从 contextvar 取上下文
 3. **负向权限用例（P0-1 防线不旁路）**：B 身份经 Agent 端点提问并诱导调用 search 访问 A 的私有库 → 工具返回 403 语义（PermissionDeniedError）→ tool_result status=denied → Agent 最终回答不泄露 A 库任何内容
-4. **意图识别准确性**：10 用例（5 RAG + 5 工具，含"带 kb_id 问时间"偏置用例）≥ 9/10 正确，用例清单入实施记录
+4. **意图识别准确性**：12 用例（5 RAG + 5 工具 + 2 plain，含"带 kb_id 问时间"偏置用例与"无 kb_id 需查资料"裸问题边界用例）≥ 11/12 正确（等比于原 ≥9/10），用例清单入实施记录
 5. **工具端到端**：calculator / current_time / search_knowledge_base / simulate_order_query 各 1 条 SSE 全链路，事件序列含 `intent → tool_call → tool_result → token → done`
 6. **循环终止**：5 种场景各 1 个实测用例（上限场景用"反复调用工具不要停"类 prompt 构造）
 7. **老端点零回归**：`/api/chat/stream` 事件**类型序列**与实施前一致（conversation → retrieval_debug → token×N → citations → done）+ **关键字段结构**一致（事件名、payload key 集合、citations 数组长度）+ 首尾 token 内容一致；**不要求逐字节一致**（SSE 天然时序抖动，逐字节标准会误报）；P0-2 冒烟 8 段全绿

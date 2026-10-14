@@ -115,3 +115,70 @@
 - 意图分类存在 LLM 波动：端到端用例"你好，请用一句话介绍这个项目"被判 rag（该句语义含糊）；误判时行为合法（完整 rag 序列、不崩），B 兜底（超时/异常默认 rag）本就是安全侧；分类准确率以第 1 轮冒烟 4/4 为准，P1 可观察线上误判率再调 few-shot
 - 回归期间重置过 `18838166792` / `testuser_b` 密码，结束后已将 `18838166792` 恢复为账号.md 记录值（123456）并登录验证；`testuser_b` 现密码 `TestB123456`（仅本地测试用）
 - 场景⑤的 monkeypatch 手法（替换 `AGENT_TOOLS[...].coroutine`）可复用为慢工具注入的标准测试姿势
+
+## 2026-10-14 · 第 3 轮（收尾轮）：前端最小改造 + 12 用例验收 + §8 语义补全（基线 `9e7cf8f`）
+
+**改动摘要**
+
+- `backend/app/services/agent_service.py`（+12/-2）：**D16** `MAX_TOOL_CALLS_PER_ROUND=10` 单轮 tool_calls 截断（超限执行前 10 个，被丢弃的 tool_call_id 回填"Error: 本轮工具调用数超上限(10)，此调用未执行" ToolMessage——协议要求每个 tool_call 必须有响应）；tool_call/tool_result payload 增加 `round` 字段（**D17**，向后兼容）
+- `docs/requirements/P0-3a-agent-tools.md` → **v1.2**（3 处）：状态行补第 3 轮前修订记录；§8 语义澄清块（"3 轮上限"指 LLM 决策轮次上限 ≠ 工具调用次数上限，场景③ 24 次工具实测印证）；§12.4 由 10 用例扩为 **12 用例（5 RAG + 5 工具 + 2 plain）≥11/12**（用户拍板，+2 plain 转正）
+- `scripts/agent_intent_cases.py` 新建（69 行）：12 用例直调 `classify_intent` 验收（含 T3 带 kb_id 问时间偏置反例、R4 含工具触发词实为 RAG、R5 无 kb_id 裸问题、P1 已知判错观测例）
+- `frontend/src/services/api.ts`（+13）：`AgentIntent` 类型 + `ToolTraceItem` 接口（status 六态枚举）
+- `frontend/src/hooks/useSSE.ts`（8 处）：SSEState 增 intent/toolEvents；`SendOptions.useAgent` 切换 `/api/chat/agent/stream`；3 个新事件 case（tool_result 从后往前回填同名 running 项）
+- `frontend/src/components/AgentToolLog/` 新建（tsx 71 行 + less 77 行）：可折叠面板，每项渲染状态 Tag + 工具名 + 第 N 轮 + 耗时 + 参数摘要
+- `frontend/src/components/ChatWindow/index.tsx`（8 处，+19）：Agent 开关（**D18** 默认关）、完成 effect 写 toolTraces、历史/加载气泡条件渲染面板
+
+**验收结果**（§12 十四条一次性真跑，全程真命令真输出）
+
+| # | 项 | 结果 |
+|---|---|---|
+| 1 | 禁区零改动 | ✅ `git diff 9e7cf8f -- loader/splitter/retrieval/vector_store/rag_chain` 空 |
+| 2 | contextvar 安全约束（AST/grep） | ✅ 6 个 args_schema（_SearchKBArgs 等）零 user_id/db/user；`_agent_db.get()/_agent_user.get()` 调用 2 处；import 无 fastapi、无禁区模块（`_get_llm` grep 命中均为"不 import"注释） |
+| 3 | 负向权限三段式 | ✅ ①service 直调 PermissionDeniedError ②Agent 循环全链路：LLM 先 list（B 可见库空 `[]`）→ search kb=1 **status=denied** → 拒绝话术 ③实体级判据零泄露（判据已修正为"实体名在回答且不在用户问题中"） |
+| 4 | 意图分类 12 用例 ≥11/12 | ✅ **11/12**（R 5/5、T 5/5、P2 ✓）；唯一判错 P1 实测 3003/3004/3005ms 三连精确卡 3s 降级线——确定性超时兜底非语义判错，不擅自改已拍板阈值，待观测 |
+| 5 | 工具端到端 SSE | ✅ calculator（48.0）/ current_time / simulate_order_query（SO-1002 待支付）各 1 条 `intent→conversation→tool_call→tool_result(success)→token→done`；**search 口径偏差诚实记录**："查资料"语义被分类器判 rag（§12.4 R4 的设计期望，第一道防线），HTTP 层无法自然触发；search 链路由 Agent 循环全链路（denied 转换）+ service 层 success（第 1 轮冒烟）双层覆盖，不为测试扭曲分类行为 |
+| 6 | 循环终止 5 场景 | ✅ 5/5（本轮③为 21 次 success 后 FORCED_STOP，LLM 波动属正常） |
+| 7 | 老端点零回归 | ✅ RAG：`conversation→retrieval_debug→token×263→citations→done`；plain：`conversation→token×20→done`；smoke 8 段全绿 |
+| 8 | 分层纪律 | ✅ agent_service 零 fastapi 符号、零禁区 import；AST 自证 7 路由：agent_stream=11 行 ≤15 ✓，chat_stream=17/upload_file_for_chat=67 为 P0-2 时代已登记豁免（3a 新增路由零超限） |
+| 9 | admin 附带项 | ✅ `ADMIN_USERNAMES=admin`：admin is_admin=1、其余 3 用户 0（列表外不升权）；重复启动无 promoted 日志 = 幂等静默 |
+| 10 | 双模型对比报告 | ✅ 第 1 轮产出（10/10 平局 → D1 拍板 DeepSeek），本轮引用 |
+| 11 | 前端 tsc + 面板 | ✅ `tsc -b` 通过；浏览器实证：Switch 开 → 提问 → 面板展开（成功 Tag / current_time / 第 1 轮 / 1ms / `{"timezone": "Asia/Shanghai"}`），回答含工具准确时间 16:06:24 |
+| 12 | 零新依赖 | ✅ requirements.txt / package.json / package-lock.json 零 diff |
+| 13 | P0-1 五项回归 | ✅ ①未登录 401 ②B 跨库 403 ③B 访问他人会话 404 ④存量归属 kb1-3→user2 完好 ⑤openapi 锁图标 23/26（基线 22 不减，净增 1 锁即 agent/stream 自带 security） |
+| 14 | AGENT_TOOLS 白名单 | ✅ 7 工具（search_knowledge_base/list_knowledge_bases/get_feedback_stats/get_conversation_history/calculator/current_time/simulate_order_query）零 create/update/delete/upload/rename/export/batch |
+
+**额外检查**：路由 ≤15 AST 统计数 >0 自证 ✓；前端改动仅 api.ts + useSSE.ts（事件处理 hook，SSE 分发所在层）+ ChatWindow + AgentToolLog 新组件，其余组件零改动 ✓；SSE 事件协议已文档化（README"SSE 事件协议"章节，两端点帧格式/事件序列/payload 字段表）✓
+
+**实施中发现并修正（断言假阳性三连，同日重演）**
+
+- SSE 解析 `\r\n` 残留 ×2：验证脚本 `rstrip("\n")` 漏 `\r`，事件名失配 → 假"未执行"；`od -c` 看原始字节定位后修正
+- 泄露判据重演："反洗钱局"在用户问题里，LLM 复述即命中 → 判据修正为"实体名在回答**且不在提问中**"（坑 4 教训制度化）
+- 诱导措辞两连被判 rag：非 bug，是分类器第一道防线的设计行为；验证策略改为绕开分类器直调 run_agent_loop（坑 7）
+
+**决策补充**
+
+- **D16**：`MAX_TOOL_CALLS_PER_ROUND=10`——"3 轮上限"语义澄清为 LLM 决策轮次上限；单轮调用数截断防 LLM 异常爆炸，最坏耗时三层封顶 3 轮×10 次×10s ≈ 300s；被丢弃 tool_call 必须回填 ToolMessage（OpenAI 协议硬约束）
+- **D17**：tool_call/tool_result payload 加 `round` 字段（第几轮 LLM 决策），前端面板展示"第 N 轮"，向后兼容
+- **D18**：ChatWindow Agent 开关默认关（实验性入口定位），不改变存量用户默认交互
+
+---
+
+# P0-3a 整体收尾摘要（三轮累计）
+
+**交付物清单**（三轮累计 11 文件：7 改 4 新）
+
+| 类型 | 文件 |
+|---|---|
+| 新建 | `backend/app/services/agent_service.py`（约 430 行：contextvar + 模型工厂 + classify_intent + 7 工具 + run_agent_loop） |
+| 新建 | `frontend/src/components/AgentToolLog/index.tsx` + `index.module.less` |
+| 新建 | `scripts/agent_intent_cases.py`（12 用例验收）、`scripts/agent_loop_cases.py`（5 终止场景实测） |
+| 修改 | `backend/app/api/chat.py`（agent_stream 端点 + 三分支接力 + 老端点切薄至 11 行）、`backend/app/core/config.py`（agent_model/admin_usernames）、`backend/app/main.py`（admin 升权钩子）、`backend/.env.example`、`frontend/src/services/api.ts`、`frontend/src/hooks/useSSE.ts`、`frontend/src/components/ChatWindow/index.tsx`、`docs/requirements/P0-3a-agent-tools.md`（v1.2） |
+
+**关键决策索引**：D1 双模型平局拍板 DeepSeek（第 1 轮）· D10 伪流式 · D11 双超时 · D12 conversation 单点化 · D13 done 路由层收尾 · D14 负例排除 admin · D15 实体级泄露判据（第 2 轮）· D16 单轮 10 次截断 · D17 round 字段 · D18 Agent 开关默认关（第 3 轮）
+
+**遗留 / 下一阶段**
+
+- 意图分类 P1 用例超时降级（3s 阈值偏紧）：不改已拍板阈值，线上观测误判率后再调 few-shot 或模型
+- search 工具 HTTP 层不可自然触发（分类器防线）：属架构特性，若需"检索+计算"混合任务可考虑分类器支持多标签或 Agent 内嵌检索（P0-3b §14 第 2 条已列）
+- 工具调用 trace 未持久化（仅当前会话内存）：历史会话不显示工具过程，归 P1
+- **P0-3b LLM 网关统一**：需动禁区 rag_chain.py/retrieval.py（`_get_llm`/`_get_chat_llm`/`_get_agent_llm` 三处收敛），走禁区改动流程，前置需求清单见需求文档 §14

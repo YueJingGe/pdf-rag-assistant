@@ -20,7 +20,8 @@
 - **P0 基础补强**（当前阶段）：把"能跑的 demo"补成"有工程底子的系统"
   - ✅ **P0-1 鉴权强制执行 + 数据归属**（2026-10-13 完成，基线 commit `f575eba`）
   - ✅ **P0-2 service 层抽取 + 异常分层**（2026-10-14 完成，services/ 六模块就绪，四个路由文件全部切薄）
-  - ⬜ **P0-3 LLM 网关统一 + Agent 工具基座**（待启动；service 层已就绪，Agent 工具可直接调 service 函数）
+  - ✅ **P0-3a Agent 工具基座**（2026-10-14 完成，agent_service + /api/chat/agent/stream + 前端 AgentToolLog；需求 docs/requirements/P0-3a-agent-tools.md，三轮记录 docs/changelog/P0-3a-agent-tools.md）
+  - ⬜ **P0-3b LLM 网关统一**（待启动；需动禁区 rag_chain.py / retrieval.py，走禁区改动流程，前置需求见 P0-3a 需求文档 §14）
 - **P1 产品完整**：知识库授权管理 API、会话历史完善、文档管理增强
 - **P2 加分项**：RAGAS 评估自动化、多租户、缓存与性能
 

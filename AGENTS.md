@@ -9,7 +9,8 @@
 
 - ✅ **P0-1 鉴权强制执行 + 数据归属**（2026-10-13，基线 commit `f575eba`，范例：`docs/requirements/P0-1-auth.md`）
 - ✅ **P0-2 service 层 抽取 + 异常分层**（2026-10-14 完成，三轮记录：docs/changelog/P0-2-service-layer.md；边界决策：docs/decisions/002-service-http-boundary.md）
-- ⬜ **P0-3 LLM 网关统一 + Agent 工具基座**（待启动；service 层已就绪，工具可直接调 service 函数，预演见 scripts/smoke_test_services.py）
+- ✅ **P0-3a Agent 工具基座**（2026-10-14 完成，三轮记录：docs/changelog/P0-3a-agent-tools.md；需求：docs/requirements/P0-3a-agent-tools.md）
+- ⬜ **P0-3b LLM 网关统一**（待启动；需动禁区 rag_chain.py / retrieval.py，走禁区改动流程；前置需求清单见 docs/requirements/P0-3a-agent-tools.md §14）
 
 ## 🔴 核心工作流（每次新任务必须执行，逐条写死不可裁剪）
 

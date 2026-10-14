@@ -38,6 +38,7 @@
 - 🔐 **多租户隔离**：每个知识库独立 FAISS 索引，数据互不干扰
 - 🛡️ **鉴权与数据归属**：所有业务接口强制 JWT 认证（未登录 401），知识库/会话归属创建者，他人私有库 403 拒绝
 - 🧱 **Service 分层**：业务逻辑下沉 services/ 层，领域异常经全局 handler 统一转 HTTP（404/403/400/409），路由层只留参数注入与响应组装；service 函数可脱离 HTTP 直接调用（Agent 工具基座预演）
+- 🧰 **Agent 工具基座**：意图分类三路接力（rag/tool/plain），tool 分支驱动 7 个只读工具（检索/计算/时间/订单模拟等）的手写 bind_tools 循环；三重保险防失控：3 轮决策上限、单轮 10 次调用截断、双超时（单工具 10s / LLM 15s）+ 连续同类错误熔断；工具身份经 contextvar 注入，与 RAG 同源权限防线，前端可折叠日志面板展示每步调用
 
 ## 技术栈
 
@@ -76,6 +77,7 @@ pdf-rag-assistant/
 │   │   │   ├── splitter.py         # 文本分块策略
 │   │   │   └── vector_store.py     # FAISS 向量存储管理
 │   │   ├── services/               # 业务服务层（P0-2，路由切薄后业务逻辑在此）
+│   │   │   ├── agent_service.py    # Agent 工具基座（P0-3a：意图分类/7 工具注册/run_agent_loop）
 │   │   │   ├── chat_service.py     # 会话/消息编排（SSE 生成器留路由层）
 │   │   │   ├── document_service.py # 文档上传/删除/索引重建编排
 │   │   │   ├── exceptions.py       # 领域异常（全局 handler 转 HTTP）
@@ -100,6 +102,7 @@ pdf-rag-assistant/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
+│   │   │   ├── AgentToolLog/       # Agent 工具调用日志面板（可折叠）
 │   │   │   ├── ChatWindow/         # 聊天窗口（流式消息展示）
 │   │   │   ├── CitationView/       # 引用来源展示
 │   │   │   ├── DocumentUpload/     # 文档上传组件
@@ -117,6 +120,8 @@ pdf-rag-assistant/
 │   ├── package.json
 │   └── vite.config.ts              # Vite 构建配置（含代理）
 ├── scripts/
+│   ├── agent_intent_cases.py       # 意图分类 12 用例验收（P0-3a，直调 classify_intent）
+│   ├── agent_loop_cases.py         # Agent 循环 5 终止场景实测（P0-3a，直调 run_agent_loop）
 │   ├── rebuild_index.py            # 重建向量索引
 │   ├── run_ragas_eval.py           # RAGAS 离线评估
 │   └── smoke_test_services.py      # service 层冒烟测试（不经 HTTP 直接调 service）
@@ -189,6 +194,7 @@ DeepSeek API 流式生成 → SSE 推送到前端
 - **HyDE 检索**：API 级别 `use_hyde` 参数，支持 A/B 测试对比
 - **引用溯源**：点击引用段落 → 右侧 Drawer 打开文档并高亮定位
 - **检索调优面板**：调试视图展示 top_k chunks、相关性评分、反馈导出
+- **智能路由**：意图分类自动接力——闲聊走 plain、知识问题走 RAG 检索、工具任务走 Agent 循环；Agent 循环支持多步工具协作（先查后算等），每步调用在前端可折叠日志面板展示工具名/参数摘要/耗时/状态/轮次，聊天窗口顶部开关可切换（默认关闭）
 - **会话持久化**：刷新页面保留当前知识库和对话（localStorage）
 
 ### 文档管理
@@ -316,7 +322,7 @@ docker-compose up -d
 # 访问 http://localhost
 ```
 
-## API 概览（23 个端点）
+## API 概览（26 个端点）
 
 | 方法   | 路径                                           | 说明                             |
 | ------ | ---------------------------------------------- | -------------------------------- |
@@ -330,6 +336,7 @@ docker-compose up -d
 | GET    | `/api/knowledge_bases/{id}/documents`          | 文档列表                         |
 | DELETE | `/api/knowledge_bases/{id}/documents/{doc_id}` | 删除文档                         |
 | POST   | `/api/chat/stream`                             | 流式问答（SSE，支持 `use_hyde`） |
+| POST   | `/api/chat/agent/stream`                       | Agent 流式问答（SSE，意图分类 + 工具循环） |
 | POST   | `/api/chat/query`                              | 非流式问答（A/B 测试）           |
 | GET    | `/api/chat/conversations/{kb_id}`              | 对话列表                         |
 | GET    | `/api/chat/messages/{conversation_id}`         | 消息历史                         |
@@ -350,7 +357,37 @@ python scripts/run_ragas_eval.py <kb_id> [qa_pairs.json]
 
 # 数据库结构迁移（存量库增加 user_id 归属字段；幂等可重复执行）
 python scripts/migrate_add_user_id.py
+
+# 意图分类 12 用例验收（P0-3a，直调 classify_intent，依赖 LLM 网络，约 30s）
+python scripts/agent_intent_cases.py
+
+# Agent 循环 5 终止场景实测（P0-3a，直调 run_agent_loop，约 1-3 分钟）
+cd backend && python3 ../scripts/agent_loop_cases.py
 ```
+
+## SSE 事件协议
+
+两个流式端点共用事件帧格式（`event: <类型>` + `data: <JSON>`，`\r\n` 分隔）：
+
+### POST /api/chat/stream（标准问答）
+
+| 分支   | 事件序列                                                |
+| ------ | ------------------------------------------------------- |
+| RAG    | `conversation` → `retrieval_debug` → `token`×N → `citations` → `done` |
+| plain  | `conversation` → `token`×N → `done`                     |
+
+### POST /api/chat/agent/stream（Agent 问答）
+
+`intent` 事件先声明三路分类结果；plain/rag 分支后续事件与老端点完全一致（共用生成器），tool 分支进入 Agent 循环：
+
+| 事件         | payload 关键字段                                    | 说明                                              |
+| ------------ | --------------------------------------------------- | ------------------------------------------------- |
+| `intent`     | `intent: "rag" \| "tool" \| "plain"`                | 意图分类（3s 超时兜底 rag）                       |
+| `tool_call`  | `name / args_summary / round`                       | Agent 决策调用工具（round 为第几轮 LLM 决策）     |
+| `tool_result`| `name / status / duration_ms / result_summary / round` | status ∈ success / timeout / denied / not_found / validation / error |
+| `token`      | `content`                                           | LLM 流式回答（三分支同构）                        |
+
+前端 `AgentToolLog` 面板按 tool_call/tool_result 顺序渲染工具调用过程（状态 Tag + 耗时 + 参数摘要，可折叠）。
 
 ## 关键设计决策
 
