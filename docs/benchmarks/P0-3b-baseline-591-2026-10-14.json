@@ -1,0 +1,78 @@
+{
+  "label": "baseline-591",
+  "date": "2026-10-14",
+  "question": "你好呀今天心情不错",
+  "runs": 3,
+  "n_tokens": [
+    19,
+    15,
+    16
+  ],
+  "token_min": 15,
+  "token_max": 19,
+  "token_mean": 16.7,
+  "assert_window": [
+    10,
+    24
+  ],
+  "results": [
+    {
+      "events_head": [
+        "conversation",
+        "token",
+        "token"
+      ],
+      "events_tail": [
+        "token",
+        "token",
+        "done"
+      ],
+      "first_is_conversation": true,
+      "last_is_done": true,
+      "n_tokens": 19,
+      "answer": "你好！很高兴听到你今天心情不错！ 😊 如果有什么可以帮到你的，随时告诉我。",
+      "answer_len": 37,
+      "has_punct": true,
+      "passes_min_len": true
+    },
+    {
+      "events_head": [
+        "conversation",
+        "token",
+        "token"
+      ],
+      "events_tail": [
+        "token",
+        "token",
+        "done"
+      ],
+      "first_is_conversation": true,
+      "last_is_done": true,
+      "n_tokens": 15,
+      "answer": "你好！很高兴听到你今天心情不错！有什么我可以帮你的吗？",
+      "answer_len": 27,
+      "has_punct": true,
+      "passes_min_len": true
+    },
+    {
+      "events_head": [
+        "conversation",
+        "token",
+        "token"
+      ],
+      "events_tail": [
+        "token",
+        "token",
+        "done"
+      ],
+      "first_is_conversation": true,
+      "last_is_done": true,
+      "n_tokens": 16,
+      "answer": "你好！很高兴听到你今天心情不错。有什么我可以帮你的吗？😊",
+      "answer_len": 28,
+      "has_punct": true,
+      "passes_min_len": true
+    }
+  ],
+  "baseline_healthy": true
+}
