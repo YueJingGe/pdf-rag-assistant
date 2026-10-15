@@ -36,6 +36,10 @@
 >
 > 产出 `docs/benchmarks/P0-3b-baseline-{main,hyde}-v2-{date}.{json,md}`；通过健康门槛后 v2 为现行基线，v1 正式作废（P0-3b 步 2 起的 RAGAS 回归均以 v2 为基准）。
 
+## 遗留问题（P1 评估）
+
+> **遗留问题**：plain_chat_stream 三路路由的前置检查不一致——`_get_chat_llm`（带图）有 CHAT_API_KEY 空则回退 `_get_llm`；591 内联（纯文本）无前置检查，空 key 走构造层抛 OpenAIError（500）。P0-3b 保持精确复刻未统一；P1 评估是否统一三路前置检查。
+
 ## 步 1：llm_gateway.py 新建 + 5 处全量对拍（2026-10-15）
 
 **网关落盘**：
@@ -57,4 +61,9 @@
 **对拍期间的语义澄清**（已如实写入脚本注释）：初版场景 4 误设"chat_text 空 key 照样构造成功后对比参数"，实测 ChatOpenAI 在 api_key 为空时 validate_environment 直接抛 `OpenAIError` 构造不出实例——即 591 原内联在 CHAT_API_KEY 空时同样无法构造成功，其真实语义是"无前置检查、构造层抛 OpenAIError"（而非"不报错"）。用例已改为断言双方抛同类异常，网关 `chat_text` 角色保持 `raise_if_empty=False` 不做前置检查，精确复刻而非悄悄统一。
 
 **边界**：对拍纯构造不调 LLM（ChatOpenAI 实例化不发网络请求），不受 DeepSeek 故障影响；禁区文件只读 import 未改动。步 1 完成，按用户指令停步，不进入步 2（等 v2 基线产出）。
+
+### 等待期补强（2026-10-15，检查点 1/2：评估侧；检查点 3 + 并行任务随网关提交落盘）
+
+- **检查点 1 遗留登记**：见上方“遗留问题”节（plain_chat_stream 三路前置检查不一致，P1 评估统一）
+- **检查点 2 dry-run 命名防混淆**：`_write_report` 加 dry_run 参数——产物文件名强制 `-dryrun` 后缀 + md 头部警示行 + meta.dry_run 标记。理由：固定假分数（0.9/0.8/0.7/0.6）能通过健康门槛，若沿用正式 label 落盘会产生“看起来像主基线”的混淆文件。实测（--dry-run + 故意用正式 label baseline-main-v2）落盘 `P0-3b-baseline-main-v2-dryrun-2026-10-15.{json,md}`，验证后已删除；`ls docs/benchmarks/` 确认仅 v1-superseded + 591 + qa-pairs，无混淆文件
 

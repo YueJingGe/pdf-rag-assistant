@@ -161,7 +161,7 @@ async def _collect_all(qa_pairs: list[dict], use_hyde: bool) -> list[dict]:
     return rows
 
 
-def _write_report(label: str, group: str, use_hyde: bool, rows: list[dict], agg: dict, per_q: list[dict], rows_source: str = "rag_query 在线收集") -> None:
+def _write_report(label: str, group: str, use_hyde: bool, rows: list[dict], agg: dict, per_q: list[dict], rows_source: str = "rag_query 在线收集", dry_run: bool = False) -> None:
     """JSON 原始值 + md 报告双落盘到 docs/benchmarks/。"""
     DOCS_BENCH.mkdir(parents=True, exist_ok=True)
     meta = {
@@ -180,9 +180,13 @@ def _write_report(label: str, group: str, use_hyde: bool, rows: list[dict], agg:
             "必做档（纯规则，无 LLM）：分号行尾→句号、无句读行尾补句号、剥 [来源:...] 标记；"
             "剥 **/剥# 经对照切句结构 10/10 无变化，按不变就不剥未纳入"
         ),
+        "dry_run": dry_run,
     }
 
-    json_path = DOCS_BENCH / f"P0-3b-{label}-{meta['date']}.json"
+    # 检查点 2：dry-run 产物文件名强制带 -dryrun（固定假分数能通过健康门槛，
+    # 若沿用正式 label 落盘会产生"看起来像主基线"的混淆文件）
+    suffix = "-dryrun" if dry_run else ""
+    json_path = DOCS_BENCH / f"P0-3b-{label}{suffix}-{meta['date']}.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "aggregate": agg, "per_question": per_q, "rows": rows}, f, ensure_ascii=False, indent=2)
 
@@ -195,6 +199,10 @@ def _write_report(label: str, group: str, use_hyde: bool, rows: list[dict], agg:
         f"- **self-judging bias**：{meta['self_judging_bias']}",
         f"- **judge 配置锁定**：{meta['judge_lock']}",
         f"- answer 归一化：{meta['normalization']}",
+    ]
+    if dry_run:
+        lines.insert(2, "- ⚠️ **DRY-RUN 产物**：固定假分数，仅供流程检查，跑完删除，不得作为基线")
+    lines += [
         "",
         "## 聚合四指标",
         "",
@@ -264,7 +272,7 @@ def _write_report(label: str, group: str, use_hyde: bool, rows: list[dict], agg:
             "",
         ]
 
-    md_path = DOCS_BENCH / f"P0-3b-{label}-{meta['date']}.md"
+    md_path = DOCS_BENCH / f"P0-3b-{label}{suffix}-{meta['date']}.md"
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"\nReport saved to {json_path} and {md_path}")
@@ -398,7 +406,7 @@ def run_eval(qa_file: str, group: str, label: str, from_rows: Optional[str] = No
     _health_gate(agg)
 
     # 4) 双落盘
-    _write_report(label, group, use_hyde, rows, agg, per_q, rows_source)
+    _write_report(label, group, use_hyde, rows, agg, per_q, rows_source, dry_run)
 
 
 if __name__ == "__main__":
