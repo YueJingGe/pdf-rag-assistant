@@ -134,7 +134,24 @@ def get_llm(role: str, streaming: bool = False, temperature: Optional[float] = N
 def _legacy_get_llm(role: str, streaming: bool = False,
                     temperature: Optional[float] = None) -> ChatOpenAI:
     """legacy 分支：逐字段复刻被替换的 5 处旧工厂（字面级），来源行号见各分支注释。
-    未来 roles 路径演进（如加重试/新参数）时此处冻结不动，保证回滚语义。"""
+    未来 roles 路径演进（如加重试/新参数）时此处冻结不动，保证回滚语义。
+
+    复刻来源追溯（行号基准 = ddaf841，网关落盘时的 HEAD；hash 为 git blame 各行归属）：
+
+    ================ ====================== ============================================
+      角色             来源位置               复刻基线 commit
+    ================ ====================== ============================================
+      rag_generate     rag_chain.py:114-126   0e86d4f（2026-05-19 初始提交）
+      chat_multimodal  rag_chain.py:458-470   f4ce9fe→9d84322→035fd31（05-19/05-20 演化）
+      chat_text        rag_chain.py:591-598   9d84322（2026-05-20）
+      hyde             retrieval.py:20-32     0e86d4f（2026-05-19 初始提交）
+      agent            agent_service.py:77-84 6973111（2026-10-14 P0-3a 第 1 轮）
+    ================ ====================== ============================================
+
+    删除 legacy 分支前：先 git blame 复核上述位置原工厂未被后续 commit 改动语义，
+    再以 §7.5 两态回归（真实 RAG 请求）兜底；构造参数等价性由
+    smoke_test_llm_gateway.py 场景 5（legacy 12 项）保证。
+    """
     if role == "rag_generate":
         # 复刻 rag_chain.py:114-126 _get_llm
         if not settings.deepseek_api_key:

@@ -369,7 +369,7 @@ python scripts/agent_intent_cases.py
 # Agent 循环 5 终止场景实测（P0-3a，直调 run_agent_loop，约 1-3 分钟）
 cd backend && python3 ../scripts/agent_loop_cases.py
 
-# LLM 网关 vs 旧工厂构造参数对拍（P0-3b，纯构造不调 LLM，23 项零漂移验证）
+# LLM 网关 vs 旧工厂构造参数对拍（P0-3b，纯构造不调 LLM，29 项零漂移验证）
 python3 scripts/smoke_test_llm_gateway.py
 ```
 

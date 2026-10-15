@@ -62,8 +62,10 @@
 
 **边界**：对拍纯构造不调 LLM（ChatOpenAI 实例化不发网络请求），不受 DeepSeek 故障影响；禁区文件只读 import 未改动。步 1 完成，按用户指令停步，不进入步 2（等 v2 基线产出）。
 
-### 等待期补强（2026-10-15，检查点 1/2：评估侧；检查点 3 + 并行任务随网关提交落盘）
+### 等待期补强（2026-10-15，3 检查点 + 1 并行任务）
 
 - **检查点 1 遗留登记**：见上方“遗留问题”节（plain_chat_stream 三路前置检查不一致，P1 评估统一）
 - **检查点 2 dry-run 命名防混淆**：`_write_report` 加 dry_run 参数——产物文件名强制 `-dryrun` 后缀 + md 头部警示行 + meta.dry_run 标记。理由：固定假分数（0.9/0.8/0.7/0.6）能通过健康门槛，若沿用正式 label 落盘会产生“看起来像主基线”的混淆文件。实测（--dry-run + 故意用正式 label baseline-main-v2）落盘 `P0-3b-baseline-main-v2-dryrun-2026-10-15.{json,md}`，验证后已删除；`ls docs/benchmarks/` 确认仅 v1-superseded + 591 + qa-pairs，无混淆文件
+- **检查点 3 复刻来源可追溯**：`_legacy_get_llm` docstring 增加来源表（角色 × 来源位置 × git blame commit，行号基准 ddaf841）：rag_generate←rag_chain.py:114-126（0e86d4f 初始提交）、chat_multimodal←458-470（f4ce9fe→9d84322→035fd31 三次演化）、chat_text←591-598（9d84322）、hyde←retrieval.py:20-32（0e86d4f）、agent←agent_service.py:77-84（6973111 P0-3a 第 1 轮）；删除 legacy 分支前先 blame 复核原工厂未被后续改动，再以 §7.5 两态回归兜底
+- **并行任务 legacy 对拍扩展**：场景 5 从 6 项扩至 12 项——5.1 常规（5 角色 + streaming/temperature 变体）、5.2 整角色回退、5.3 逐字段回退（与场景 3 同 4 情形），全量 **29/29 通过零漂移**；边界：仅构造参数对拍，未跑 §7.5 完整两态回归（需真实 RAG 请求，留待 API 恢复后）
 

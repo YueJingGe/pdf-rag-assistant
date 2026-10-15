@@ -152,14 +152,29 @@ settings.chat_api_key = _real_chat_key
 
 print("\n=== 场景 5：legacy 开关两态（use_legacy_llm_factory=True 内部复刻 vs 旧工厂直调）===")
 settings.use_legacy_llm_factory = True
+# 5.1 常规（5 角色 + streaming/temperature 变体）
 check("legacy rag_generate", _rag_get_llm(), get_llm("rag_generate"))
 check("legacy chat_multimodal", _get_chat_llm(), get_llm("chat_multimodal"))
+check("legacy chat_multimodal streaming=True", _get_chat_llm(streaming=True), get_llm("chat_multimodal", streaming=True))
 settings.chat_api_key = ""
+# 5.2 整角色回退（chat_multimodal 是唯一 fallback_role 角色）
 check("legacy chat_multimodal 回退", _get_chat_llm(streaming=True), get_llm("chat_multimodal", streaming=True))
 settings.chat_api_key = _real_chat_key
 check("legacy chat_text 591", old_591, get_llm("chat_text", streaming=True))
 check("legacy hyde", _hyde_get_llm(), get_llm("hyde"))
 check("legacy agent", _get_agent_llm(), get_llm("agent"))
+check("legacy agent temperature=0.7 streaming=True", _get_agent_llm(temperature=0.7, streaming=True), get_llm("agent", temperature=0.7, streaming=True))
+# 5.3 逐字段回退（agent 是唯一 per_field_fallback_prefix 角色，与场景 3 同 4 情形）
+settings.agent_model_name = ""
+check("legacy agent 仅 model 字段回退", _get_agent_llm(), get_llm("agent"))
+settings.agent_model_name, settings.agent_model_api_key = _agent_orig[0], ""
+check("legacy agent 仅 api_key 字段回退", _get_agent_llm(), get_llm("agent"))
+settings.agent_model_api_key, settings.agent_model_base_url = _agent_orig[1], ""
+check("legacy agent 仅 base_url 字段回退", _get_agent_llm(), get_llm("agent"))
+settings.agent_model_base_url = _agent_orig[2]
+settings.agent_model_name = settings.agent_model_api_key = settings.agent_model_base_url = ""
+check("legacy agent 三字段全回退 + temperature 覆盖", _get_agent_llm(temperature=0.5), get_llm("agent", temperature=0.5))
+settings.agent_model_name, settings.agent_model_api_key, settings.agent_model_base_url = _agent_orig
 settings.use_legacy_llm_factory = False
 
 n_fail = sum(1 for r in results if not r)
