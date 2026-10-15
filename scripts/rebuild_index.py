@@ -1,16 +1,27 @@
 """Rebuild FAISS indexes for all or a specific knowledge base."""
 
+# Python 3.9 兼容：注解延迟求值（否则 `int | None` 在函数定义时报 TypeError）
+from __future__ import annotations
+
 import asyncio
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
+# P0-4 修复：.env 的 DATABASE_URL/faiss 路径均为相对路径（./data/...），必须先 chdir 到
+# backend 再 import app（engine 在 import 时即创建并解析相对路径），否则从项目根执行
+# 会误建空库/空索引（实证：误产物 <项目根>/data/db.sqlite3）
+BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
+os.chdir(BACKEND_DIR)
+sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.config import settings
 from app.core.loader import load_document
 from app.core.splitter import split_documents
 from app.core.vector_store import vector_store_manager
 from app.models.database import async_session_factory, engine, Base
+import app.models.category  # noqa: F401  P0-4：注册 categories 表（documents.category_id FK 依赖）
+import app.models.user  # noqa: F401  注册 users 表（knowledge_bases.user_id FK 依赖）
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from sqlalchemy import select

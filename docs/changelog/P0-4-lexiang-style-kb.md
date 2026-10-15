@@ -71,6 +71,28 @@
 - 信息源目录级粒度（选到目录而非库）需 metadata 注入 category_id + 禁区过滤参数，P1
 - 多库 RAGAS 回归不适用：禁区零改动，无需基线对比
 
+## 第二轮收尾补记：迁移 apply + 顺带修复两个存量 bug（2026-10-15）
+
+### 迁移 apply 结果（用户执行）
+
+新建目标库 **#4「个人知识库」**：目录「金融」(1 文档+11 会话)/「司库奇尤单抗注射液说明书」(1+3)/「通信」(1+5)；源库行与 FAISS 目录已删、物理文件已 move 至 `uploads/4/`；自动备份 `backend/data/db.sqlite3.bak-p04r2`。收尾：`rebuild_index.py 4` 重建索引（86 chunks：59/11/16），三文档检索精准命中；后端已重启（含本轮修复代码）。
+
+### 修复 1：delete_kb 级联不完整（存量 bug，迁移核验时实证）
+
+**现象**：`categories` 表存在 8 条孤儿行（历次冒烟临时库的「前端基础/JavaScript/别库目录」，delete_kb 仅删 KB 行 + FAISS），且临时库恰好复用过 id=4，孤儿目录被新建的「个人知识库」认领，直接出现在用户目录树；`uploads/4/` 混入 23 个冒烟残留文件。
+
+**修复**：`kb_service.delete_kb` 改为级联清理——messages→conversations→categories→documents 行 + FAISS + `uploads/{kb_id}` 物理目录（先 DB commit 后物理删除，失败可重跑幂等）。冒烟新增 ⑬ 两断言（行全清 + uploads 目录已删），全量 35 断言绿。
+
+**数据清理**：删除孤儿 categories 8 行、`uploads/4/` 与 `uploads/5/` 冒烟残留文件（按 `documents.file_path` 白名单精确保留 3 个迁移文档）。`uploads/1/88ae8fe...金融机构风险关联...docx` 为 DB 无引用的历史孤儿，**保守保留未删**（用户可自行处置）。
+
+### 修复 2：rebuild_index.py 三处问题（收尾第 1 步执行时暴露）
+
+1. `int | None` 注解在 Python 3.9 运行时求值报 TypeError → 加 `from __future__ import annotations`
+2. 未注册 Category/User 模型 → `create_all` 时 documents/knowledge_bases 的 FK 解析失败 → 补 import
+3. **最隐蔽**：无 `os.chdir(backend)`，而 .env 的 DATABASE_URL/索引路径均为相对路径 → 从项目根执行时误连新建的空库（“成功”打出 Done 但实际 0 文档），并在项目根误建 `data/db.sqlite3` → chdir 提到 import app 之前（engine 创建时即解析相对路径），误建空库已删
+
+**教训**：scripts/ 下凡 import app 的脚本必须与 smoke 脚本同模式（chdir + sys.path 前置）；“Done.” 不等于生效，必须核验产物（索引文件存在 + 检索命中）。
+
 ## 第一轮：全量实施（2026-10-15）
 
 按需求 §7 实施顺序一轮完成：基线 commit → 数据模型/迁移 → 后端 API → 零 LLM 冒烟 → 前端 → 收尾。**RAG 禁区五文件 diff 为空，P0 范围零新增 LLM 调用。**

@@ -26,6 +26,7 @@ from app.models.category import Category  # noqa: E402
 from app.models.conversation import Conversation  # noqa: E402
 from app.models.database import async_session_factory  # noqa: E402
 from app.models.document import Document  # noqa: E402
+from app.models.knowledge_base import KnowledgeBase  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.services import (  # noqa: E402
     category_service,
@@ -334,6 +335,34 @@ async def main() -> None:
                     print("✓ 他人无读权限 → PermissionDeniedError（403，SSE 前拦截）")
             else:
                 print("⚠ 无其他用户，跳过 ⑫ 权限负例")
+
+            # ⑬ 删库级联清理（P0-4 修复回归）：delete_kb 后目录/文档/会话/KB 行/uploads 物理目录全无残留
+            # （修复前仅删 KB 行 + FAISS，孤儿目录曾被后续新建的同 id 库认领——迁移时实证）
+            kb2_id = temp_kb2.id
+            await kb_service.delete_kb(db, user, kb2_id)
+            temp_kb2 = None  # 已删，finally 跳过重复删除
+            residual = (
+                await db.execute(select(Category).where(Category.kb_id == kb2_id))
+            ).scalars().all()
+            residual_docs = (
+                await db.execute(
+                    select(Document).where(Document.knowledge_base_id == kb2_id)
+                )
+            ).scalars().all()
+            residual_convs = (
+                await db.execute(
+                    select(Conversation).where(Conversation.knowledge_base_id == kb2_id)
+                )
+            ).scalars().all()
+            _check(
+                not residual and not residual_docs and not residual_convs
+                and await db.get(KnowledgeBase, kb2_id) is None,
+                "⑬ 删库级联：categories/documents/conversations/KB 行全清",
+            )
+            _check(
+                not (settings.upload_dir / str(kb2_id)).exists(),
+                "⑬ 删库级联：uploads 物理目录已删",
+            )
 
         finally:
             await kb_service.delete_kb(db, user, temp_kb.id)

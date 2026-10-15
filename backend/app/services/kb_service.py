@@ -8,11 +8,16 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+import shutil
+
+from sqlalchemy import delete as sa_delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import User, get_kb_or_raise
+from app.core.config import settings
 from app.core.vector_store import vector_store_manager
+from app.models.category import Category
+from app.models.conversation import Conversation, Message
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 
@@ -107,8 +112,32 @@ async def update_kb(
 
 
 async def delete_kb(db: AsyncSession, user: User, kb_id: int) -> None:
-    """删除知识库（owner 写权限），同时清理其 FAISS 向量索引。"""
+    """删除知识库（owner 写权限），级联清理其全部数据。
+
+    P0-4 修复：此前仅删 KB 行与 FAISS 索引，categories/documents/conversations/
+    messages 行与 uploads 物理目录全部残留为孤儿（冒烟临时库残留实证：孤儿目录
+    被后续新建的同 id 库认领）。顺序：先删子表行再删 KB 行，commit 成功后才删
+    物理文件（FAISS + uploads 目录），物理删除失败不影响 DB 一致性且可重跑幂等。
+    """
     kb = await get_kb_or_raise(kb_id, user, "owner", db)
-    vector_store_manager.delete_index(kb_id)
+
+    # 1) 会话与消息（先删子表 messages）
+    conv_ids = (
+        await db.execute(
+            select(Conversation.id).where(Conversation.knowledge_base_id == kb_id)
+        )
+    ).scalars().all()
+    if conv_ids:
+        await db.execute(sa_delete(Message).where(Message.conversation_id.in_(conv_ids)))
+        await db.execute(sa_delete(Conversation).where(Conversation.id.in_(conv_ids)))
+
+    # 2) 目录与文档行（文档物理文件随 uploads 目录整体清理）
+    await db.execute(sa_delete(Category).where(Category.kb_id == kb_id))
+    await db.execute(sa_delete(Document).where(Document.knowledge_base_id == kb_id))
+
     await db.delete(kb)
     await db.commit()
+
+    # 3) 物理清理（commit 成功后）
+    vector_store_manager.delete_index(kb_id)
+    shutil.rmtree(settings.upload_dir / str(kb_id), ignore_errors=True)
