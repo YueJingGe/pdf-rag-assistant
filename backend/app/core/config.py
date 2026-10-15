@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     agent_model_base_url: str = ""
     agent_model_api_key: str = ""
 
+    # LLM 网关 (P0-3b)：true 时 get_llm 走网关内 legacy 分支（逐字段复刻被替换的 5 处旧工厂，
+    # 需求 §5.3）；两态等价性由 §7.5 开关回归保证，步 7 全量验证后可删此开关
+    use_legacy_llm_factory: bool = False
+
     # Admin (P0-3a 附带项)：启动时对列表内用户升权（只升不降，见需求 §10）
     admin_usernames: str = ""
 

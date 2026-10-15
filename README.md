@@ -125,6 +125,7 @@ pdf-rag-assistant/
 │   ├── rebuild_index.py            # 重建向量索引
 │   ├── baseline_591.py             # 591 基线问题锁定性验证（RAGAS faithfulness 切句缺陷诊断）
 │   ├── run_ragas_eval.py           # RAGAS 离线评估（含 --from-rows 离线重评 / --dry-run 流程演练）
+│   ├── smoke_test_llm_gateway.py   # LLM 网关 vs 旧工厂构造参数对拍（P0-3b，纯构造不调 LLM）
 │   └── smoke_test_services.py      # service 层冒烟测试（不经 HTTP 直接调 service）
 ├── .gitignore
 └── README.md
@@ -367,6 +368,9 @@ python scripts/agent_intent_cases.py
 
 # Agent 循环 5 终止场景实测（P0-3a，直调 run_agent_loop，约 1-3 分钟）
 cd backend && python3 ../scripts/agent_loop_cases.py
+
+# LLM 网关 vs 旧工厂构造参数对拍（P0-3b，纯构造不调 LLM，23 项零漂移验证）
+python3 scripts/smoke_test_llm_gateway.py
 ```
 
 ## SSE 事件协议
