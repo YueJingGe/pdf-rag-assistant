@@ -1,9 +1,17 @@
 # RAGAS 基线：baseline-main-2026-10-14
 
+> **已作废（v1）**：kb1-01/kb1-02 faithfulness=nan（ragas 切句缺陷 × 全分号 markdown 列表 answer，详见附录外根因说明），由 v2 基线取代：P0-3b-baseline-main-v2-2026-10-14
+>
+> **TODO（待 DeepSeek API 恢复，2026-10-15 登记）**：
+> ① `python3 scripts/run_ragas_eval.py --qa-file docs/benchmarks/qa-pairs-p03b.json --group main --label baseline-main-v2 --from-rows docs/benchmarks/P0-3b-baseline-main-v1-superseded-2026-10-14.json`
+> ② `python3 scripts/run_ragas_eval.py --qa-file docs/benchmarks/qa-pairs-p03b.json --group hyde --label baseline-hyde-v2 --from-rows docs/benchmarks/P0-3b-baseline-hyde-v1-superseded-2026-10-14.json`
+> 产出 `docs/benchmarks/P0-3b-baseline-{main,hyde}-v2-{date}.{json,md}`；通过健康门槛后 v2 为现行基线，v1 正式作废。命令已验证至落盘全链路（--dry-run），仅依赖 judge API 可用。
+
 - 日期：2026-10-14｜组别：main｜use_hyde=False｜题数：10
 - judge：deepseek-v4-flash (temperature=0, max_tokens=512)｜embeddings：EMBEDDING_PROVIDER=huggingface, 与 FAISS 索引同源
 - contexts 口径：retrieve_with_strategy(use_hyde=False) hybrid（与 answer 生成同源）
 - **self-judging bias**：RAG 生成与 judge 同为 DeepSeek，指标绝对值可能偏高，但基线与收尾同源偏差可抵消
+- **judge 配置锁定**：收尾跑必须使用完全相同的 judge 配置与 embeddings/contexts 口径，任一变更即失去对比基准意义
 
 ## 聚合四指标
 

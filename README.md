@@ -123,7 +123,8 @@ pdf-rag-assistant/
 │   ├── agent_intent_cases.py       # 意图分类 12 用例验收（P0-3a，直调 classify_intent）
 │   ├── agent_loop_cases.py         # Agent 循环 5 终止场景实测（P0-3a，直调 run_agent_loop）
 │   ├── rebuild_index.py            # 重建向量索引
-│   ├── run_ragas_eval.py           # RAGAS 离线评估
+│   ├── baseline_591.py             # 591 基线问题锁定性验证（RAGAS faithfulness 切句缺陷诊断）
+│   ├── run_ragas_eval.py           # RAGAS 离线评估（含 --from-rows 离线重评 / --dry-run 流程演练）
 │   └── smoke_test_services.py      # service 层冒烟测试（不经 HTTP 直接调 service）
 ├── .gitignore
 └── README.md
@@ -355,6 +356,8 @@ python scripts/rebuild_index.py [kb_id]
 
 # RAGAS 离线评估（评估检索质量和生成质量）
 python scripts/run_ragas_eval.py <kb_id> [qa_pairs.json]
+# 离线重评：复用既有 rows JSON 只重跑 judge（不重新收集）；--dry-run：假分数走全链路不依赖真实 API
+python scripts/run_ragas_eval.py <kb_id> --from-rows <rows.json> --label <label>
 
 # 数据库结构迁移（存量库增加 user_id 归属字段；幂等可重复执行）
 python scripts/migrate_add_user_id.py

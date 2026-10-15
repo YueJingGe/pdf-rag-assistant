@@ -1,9 +1,12 @@
 # RAGAS 基线：baseline-hyde-2026-10-14
 
+> **已作废（v1）**：answer 归一化口径变更，由 v2 基线取代：P0-3b-baseline-hyde-v2-2026-10-14
+
 - 日期：2026-10-14｜组别：hyde｜use_hyde=True｜题数：3
 - judge：deepseek-v4-flash (temperature=0, max_tokens=512)｜embeddings：EMBEDDING_PROVIDER=huggingface, 与 FAISS 索引同源
 - contexts 口径：retrieve_with_strategy(use_hyde=True) hybrid（与 answer 生成同源）
 - **self-judging bias**：RAG 生成与 judge 同为 DeepSeek，指标绝对值可能偏高，但基线与收尾同源偏差可抵消
+- **judge 配置锁定**：收尾跑必须使用完全相同的 judge 配置与 embeddings/contexts 口径，任一变更即失去对比基准意义
 
 ## 聚合四指标
 

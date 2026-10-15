@@ -123,8 +123,11 @@ def main(runs: int) -> None:
     md = [
         f"# §7.4 591 独立回归基线（{today}）",
         "",
-        f"- 路径：POST /api/chat/stream（无 kb_id / 无 images / web_search=false）→ plain_chat_stream else 分支（原 rag_chain.py:591）",
-        f"- 问题：`{QUESTION}`｜运行 {runs} 次",
+        f"- 路径：POST /api/chat/stream → plain_chat_stream else 分支（原 rag_chain.py:591）",
+        f"- 问题文本锁定：`{QUESTION}`｜运行 {runs} 次",
+        f"- 请求体锁定：knowledge_base_id=null、web_search=false、无 images",
+        f"- 3 次 token 数：{ns}",
+        f"- **收尾跑必须使用完全相同的问题文本与请求体**",
         f"- token 数区间：**[min={min(ns)}, max={max(ns)}]**，均值 {summary['token_mean']}",
         f"- 收尾断言窗口：[min×0.7, max×1.3] = **{summary['assert_window']}**",
         f"- 基线健康（事件序 conversation→token×N→done、回答≥15字含标点、N>0）：**{'是' if ok else '否'}**",
