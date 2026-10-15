@@ -47,7 +47,46 @@ export interface DocumentInfo {
   chunk_count: number;
   status: string;
   error_message: string;
+  source: string; // P0-4：upload=文件上传 / online=在线创作
+  category_id: number | null; // P0-4：所属目录，null=未归类（挂根）
   created_at: string;
+}
+
+// ---- P0-4 目录树 / 在线创作 ----
+export interface CategoryInfo {
+  id: number;
+  kb_id: number;
+  parent_id: number | null;
+  name: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TreeNodeDocument {
+  id: number;
+  filename: string;
+  source: string;
+  category_id: number | null;
+  status: string;
+  file_type: string;
+  chunk_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TreeData {
+  categories: CategoryInfo[];
+  documents: TreeNodeDocument[];
+}
+
+export interface SaveMessageToKBResult {
+  detail: string;
+  document_id: number;
+  kb_id: number;
+  filename: string;
+  source: string;
+  category_id: number | null;
 }
 
 export interface ChatMessage {
@@ -134,6 +173,27 @@ export const knowledgeBaseApi = {
   update: (id: number, data: { name?: string; description?: string }) =>
     api.put<KnowledgeBase>(`/knowledge_bases/${id}`, data),
   delete: (id: number) => api.delete(`/knowledge_bases/${id}`),
+  // P0-4：目录 + 文档混合树数据（一次拉全量，前端组树）
+  getTree: (id: number) => api.get<TreeData>(`/knowledge_bases/${id}/tree`),
+};
+
+// P0-4 目录树接口
+export const categoryApi = {
+  create: (kbId: number, data: { name: string; parent_id?: number | null }) =>
+    api.post<CategoryInfo>(`/knowledge_bases/${kbId}/categories`, data),
+  rename: (kbId: number, categoryId: number, name: string) =>
+    api.patch<CategoryInfo>(`/knowledge_bases/${kbId}/categories/${categoryId}`, { name }),
+  remove: (kbId: number, categoryId: number) =>
+    api.delete(`/knowledge_bases/${kbId}/categories/${categoryId}`),
+  moveDocuments: (
+    kbId: number,
+    documentIds: number[],
+    categoryId: number | null
+  ) =>
+    api.post<{ detail: string; moved_count: number }>(
+      `/knowledge_bases/${kbId}/documents/move`,
+      { document_ids: documentIds, category_id: categoryId }
+    ),
 };
 
 export interface DocumentContent {
@@ -145,11 +205,20 @@ export interface DocumentContent {
 export const documentApi = {
   list: (kbId: number) =>
     api.get<DocumentInfo[]>(`/knowledge_bases/${kbId}/documents`),
-  upload: (kbId: number, file: File) => {
+  upload: (kbId: number, file: File, categoryId?: number | null) => {
     const formData = new FormData();
     formData.append('file', file);
+    if (categoryId != null) formData.append('category_id', String(categoryId));
     return api.post<DocumentInfo>(`/knowledge_bases/${kbId}/documents`, formData);
   },
+  // P0-4：新建在线文档（content 为真相源，后端走与上传一致的入库管道）
+  createOnline: (
+    kbId: number,
+    data: { title: string; content?: string; category_id?: number | null }
+  ) => api.post<DocumentInfo>(`/knowledge_bases/${kbId}/documents/online`, data),
+  // P0-4：保存在线文档内容（非 ready 状态后端返回 409）
+  saveContent: (kbId: number, docId: number, content: string) =>
+    api.put<DocumentInfo>(`/knowledge_bases/${kbId}/documents/${docId}/content`, { content }),
   getContent: (kbId: number, docId: number) =>
     api.get<DocumentContent>(`/knowledge_bases/${kbId}/documents/${docId}/content`),
   getContentBySource: (kbId: number, sourceFilename: string) =>
@@ -180,6 +249,16 @@ export const chatApi = {
     formData.append('file', file);
     return api.post<FileExtractResult>('/chat/upload-file', formData);
   },
+  // P0-4：消息存为知识库文档（沉淀闭环）
+  saveMessageToKb: (
+    messageId: number,
+    kbId: number,
+    categoryId?: number | null
+  ) =>
+    api.post<SaveMessageToKBResult>(`/chat/messages/${messageId}/save-to-kb`, {
+      kb_id: kbId,
+      category_id: categoryId ?? null,
+    }),
 };
 
 export const feedbackApi = {

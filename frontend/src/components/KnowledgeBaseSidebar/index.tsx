@@ -1,24 +1,31 @@
 import React, { useEffect, useState } from "react";
 import {
-  List,
+  Select,
   Button,
   Input,
   Modal,
   Form,
   Typography,
-  Tag,
-  Space,
-  Popconfirm,
+  Dropdown,
+  Avatar,
+  Tooltip,
+  Divider,
   message,
 } from "antd";
 import {
   PlusOutlined,
   DeleteOutlined,
-  DatabaseOutlined,
-  StopOutlined,
   EditOutlined,
+  UserOutlined,
+  LogoutOutlined,
+  MessageOutlined,
+  CompassOutlined,
+  HomeOutlined,
+  UploadOutlined,
+  SettingOutlined,
 } from "@ant-design/icons";
-import { knowledgeBaseApi, type KnowledgeBase } from "../../services/api";
+import CategoryTree, { type OpenableDoc } from "../CategoryTree";
+import { knowledgeBaseApi, type KnowledgeBase, type UserInfo } from "../../services/api";
 import styles from "./index.module.less";
 
 const NONE_KB: KnowledgeBase = {
@@ -35,12 +42,40 @@ interface Props {
   selectedId: number | null;
   onSelect: (kb: KnowledgeBase | null) => void;
   refreshKey?: number;
+  user: UserInfo;
+  onLogout: () => void;
+  canManage: boolean;
+  /** 上传按钮 → App 切到文档管理 tab */
+  onGoUpload: () => void;
+  /** 导航「问AI」→ App 切回问答 tab */
+  onGoChat: () => void;
+  chatActive: boolean;
+  treeRefreshKey?: number;
+  onDocChanged?: () => void;
+  onOpenDoc: (doc: OpenableDoc) => void;
+  onOpenViewer: (filename: string) => void;
 }
 
+/**
+ * P0-4 乐享式左侧导航：
+ * 顶部库切换器（原 KB 列表收拢为 Select）+ 新建/管理 → 上传按钮 →
+ * 导航项（问AI / 知识地图(P1 占位) / 主页(P1 占位)）→ 目录树 → 底部用户卡。
+ * 知识库新建/重命名/删除逻辑保留（P0 前既有能力）。
+ */
 export default function KnowledgeBaseSidebar({
   selectedId,
   onSelect,
   refreshKey,
+  user,
+  onLogout,
+  canManage,
+  onGoUpload,
+  onGoChat,
+  chatActive,
+  treeRefreshKey,
+  onDocChanged,
+  onOpenDoc,
+  onOpenViewer,
 }: Props) {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
@@ -64,19 +99,22 @@ export default function KnowledgeBaseSidebar({
     fetchList();
   }, [refreshKey]);
 
+  const current = knowledgeBases.find((kb) => kb.id === selectedId) ?? null;
+
   const handleCreate = async () => {
     const values = await form.validateFields();
     await knowledgeBaseApi.create(values);
     message.success("知识库创建成功");
     setModalOpen(false);
     form.resetFields();
-    fetchList();
+    await fetchList();
   };
 
   const handleDelete = async (id: number) => {
     await knowledgeBaseApi.delete(id);
     message.success("知识库已删除");
-    fetchList();
+    if (selectedId === id) onSelect(null);
+    await fetchList();
   };
 
   const handleRename = async () => {
@@ -86,7 +124,7 @@ export default function KnowledgeBaseSidebar({
     message.success("知识库已重命名");
     setRenameModalOpen(false);
     setRenamingKb(null);
-    fetchList();
+    await fetchList();
   };
 
   const openRenameModal = (kb: KnowledgeBase) => {
@@ -95,93 +133,139 @@ export default function KnowledgeBaseSidebar({
     setRenameModalOpen(true);
   };
 
-  const allItems = [NONE_KB, ...knowledgeBases];
-
   return (
     <div className={styles.sidebar}>
-      <div className={styles.header}>
-        <Typography.Title level={5} style={{ margin: 0 }}>
-          知识库
-        </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
+      {/* 顶部：库切换器 + 新建 + 管理 */}
+      <div className={styles.kbSwitcher}>
+        <Select
+          className={styles.kbSelect}
           size="small"
-          onClick={() => setModalOpen(true)}
+          value={selectedId ?? 0}
+          loading={loading}
+          onChange={(v) =>
+            onSelect(v === 0 ? null : knowledgeBases.find((kb) => kb.id === v) ?? null)
+          }
+          options={[
+            { value: 0, label: "普通聊天" },
+            ...knowledgeBases.map((kb) => ({ value: kb.id, label: kb.name })),
+          ]}
+        />
+        <Tooltip title="新建知识库">
+          <Button size="small" icon={<PlusOutlined />} onClick={() => setModalOpen(true)} />
+        </Tooltip>
+        {current && (
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: [
+                { key: "rename", label: "重命名知识库", icon: <EditOutlined /> },
+                {
+                  key: "delete",
+                  label: "删除知识库",
+                  icon: <DeleteOutlined />,
+                  danger: true,
+                },
+              ],
+              onClick: ({ key }) => {
+                if (key === "rename") openRenameModal(current);
+                if (key === "delete") {
+                  Modal.confirm({
+                    title: `删除知识库「${current.name}」？`,
+                    content: "将同时删除库内文档与向量索引，不可恢复。",
+                    okText: "删除",
+                    okButtonProps: { danger: true },
+                    onOk: () => handleDelete(current.id),
+                  });
+                }
+              },
+            }}
+          >
+            <Button size="small" icon={<SettingOutlined />} />
+          </Dropdown>
+        )}
+      </div>
+
+      {/* 操作：上传文档（需选中知识库） */}
+      <div className={styles.actions}>
+        <Button
+          block
+          size="small"
+          type="primary"
+          ghost
+          icon={<UploadOutlined />}
+          disabled={!selectedId}
+          onClick={onGoUpload}
         >
-          新建
+          上传文档
         </Button>
       </div>
 
-      <List
-        loading={loading}
-        dataSource={allItems}
-        renderItem={(kb) => (
-          <List.Item
-            className={`${styles.item} ${
-              (selectedId === null && kb.id === 0) || selectedId === kb.id
-                ? styles.selected
-                : ""
-            }`}
-            onClick={() => onSelect(kb.id === 0 ? null : kb)}
-            actions={
-              kb.id === 0
-                ? []
-                : [
-                    <Button
-                      key="edit"
-                      type="text"
-                      size="small"
-                      icon={<EditOutlined />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openRenameModal(kb);
-                      }}
-                    />,
-                    <Popconfirm
-                      key="del"
-                      title="确定删除该知识库？"
-                      onConfirm={(e) => {
-                        e?.stopPropagation();
-                        handleDelete(kb.id);
-                      }}
-                    >
-                      <Button
-                        type="text"
-                        size="small"
-                        danger
-                        icon={<DeleteOutlined />}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </Popconfirm>,
-                  ]
-            }
+      {/* 导航项 */}
+      <div className={styles.nav}>
+        <div
+          className={`${styles.navItem} ${chatActive ? styles.navActive : ""}`}
+          onClick={onGoChat}
+        >
+          <MessageOutlined className={styles.navIcon} /> 问AI
+        </div>
+        <Tooltip title="P1 敬请期待" placement="right">
+          <div className={`${styles.navItem} ${styles.navDisabled}`}>
+            <CompassOutlined className={styles.navIcon} /> 知识地图
+          </div>
+        </Tooltip>
+        <Tooltip title="P1 敬请期待" placement="right">
+          <div className={`${styles.navItem} ${styles.navDisabled}`}>
+            <HomeOutlined className={styles.navIcon} /> 主页
+          </div>
+        </Tooltip>
+      </div>
+
+      <Divider style={{ margin: "8px 0" }} />
+
+      {/* 目录树（普通聊天无目录） */}
+      <div className={styles.treeWrap}>
+        {selectedId ? (
+          <CategoryTree
+            kbId={selectedId}
+            refreshKey={treeRefreshKey}
+            canManage={canManage}
+            onOpenDoc={onOpenDoc}
+            onOpenViewer={onOpenViewer}
+            onDocChanged={onDocChanged}
+          />
+        ) : (
+          <Typography.Text
+            type="secondary"
+            style={{ fontSize: 12, padding: "8px 12px", display: "block" }}
           >
-            <List.Item.Meta
-              avatar={
-                kb.id === 0 ? (
-                  <StopOutlined style={{ fontSize: 20, color: "#999" }} />
-                ) : (
-                  <DatabaseOutlined
-                    style={{ fontSize: 20, color: "#1677ff" }}
-                  />
-                )
-              }
-              title={kb.name}
-              description={
-                kb.id === 0 ? (
-                  "不使用知识库"
-                ) : (
-                  <Space size={4}>
-                    <Tag color="blue">{kb.document_count} 文档</Tag>
-                    <Tag>{kb.permission === "private" ? "私有" : "公开"}</Tag>
-                  </Space>
-                )
-              }
-            />
-          </List.Item>
+            普通聊天不使用知识库；选择知识库后可在此管理目录与文档。
+          </Typography.Text>
         )}
-      />
+      </div>
+
+      {/* 底部用户卡 */}
+      <div className={styles.userCard}>
+        <Avatar size="small" icon={<UserOutlined />} style={{ backgroundColor: "#1677ff" }} />
+        <span className={styles.userName} title={user.display_name}>
+          {user.display_name}
+        </span>
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: [
+              {
+                key: "role",
+                label: `角色：${user.is_admin ? "管理员" : "成员"}`,
+                disabled: true,
+              },
+              { type: "divider" },
+              { key: "logout", label: "退出登录", icon: <LogoutOutlined />, onClick: onLogout },
+            ],
+          }}
+        >
+          <Button type="text" size="small" icon={<SettingOutlined />} />
+        </Dropdown>
+      </div>
 
       <Modal
         title="新建知识库"

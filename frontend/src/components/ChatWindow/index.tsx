@@ -10,8 +10,11 @@ import {
   Tooltip,
   Space,
   Card,
+  Select,
   Dropdown,
   Popconfirm,
+  Modal,
+  TreeSelect,
   message,
 } from "antd";
 import {
@@ -31,6 +34,7 @@ import {
   LoadingOutlined,
   PaperClipOutlined,
   GlobalOutlined,
+  SaveOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import ReactMarkdown from "react-markdown";
@@ -39,12 +43,16 @@ import { useSSE } from "../../hooks/useSSE";
 import CitationView, { type CitationClickInfo } from "../CitationView";
 import RetrievalDebugPanel from "../RetrievalDebugPanel";
 import AgentToolLog from "../AgentToolLog";
+import { buildCategorySelectTree } from "../CategoryTree";
 import {
   chatApi,
+  knowledgeBaseApi,
   type Citation,
   type RetrievalDebug,
   type ConversationInfo,
   type ToolTraceItem,
+  type KnowledgeBase,
+  type TreeData,
 } from "../../services/api";
 import styles from "./index.module.less";
 
@@ -83,6 +91,8 @@ interface Props {
   knowledgeBaseName: string;
   userRole?: string;
   onCitationClick?: (info: CitationClickInfo) => void;
+  /** P0-4：消息存入知识库成功后通知外层刷新目录树 */
+  onDocSavedToKb?: () => void;
 }
 
 /**
@@ -96,6 +106,7 @@ export default function ChatWindow({
   knowledgeBaseName,
   userRole,
   onCitationClick,
+  onDocSavedToKb,
 }: Props) {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -111,6 +122,16 @@ export default function ChatWindow({
   const docInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sse = useSSE();
+
+  // P0-4：存为知识库文档（问答沉淀闭环）
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveContent, setSaveContent] = useState("");
+  const [saveKbList, setSaveKbList] = useState<KnowledgeBase[]>([]);
+  const [saveTargetKbId, setSaveTargetKbId] = useState<number | null>(null);
+  const [saveCatId, setSaveCatId] = useState<number | null>(null);
+  const [saveCatTree, setSaveCatTree] = useState<TreeData | null>(null);
+  const [saveCatLoading, setSaveCatLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const effectiveKbId = knowledgeBaseId ?? 0; // 普通聊天用 0 作为 kb_id
 
@@ -321,6 +342,77 @@ export default function ChatWindow({
     }
   }, [sse.loading]);
 
+  // ---- P0-4：消息存为知识库文档 ----
+  const loadSaveCats = async (kbId: number) => {
+    setSaveCatLoading(true);
+    try {
+      const { data } = await knowledgeBaseApi.getTree(kbId);
+      setSaveCatTree(data);
+    } catch {
+      setSaveCatTree(null);
+    } finally {
+      setSaveCatLoading(false);
+    }
+  };
+
+  const handleOpenSaveModal = (content: string) => {
+    if (!sse.conversationId) {
+      message.warning("消息尚未持久化，请稍后再试");
+      return;
+    }
+    setSaveContent(content);
+    setSaveTargetKbId(knowledgeBaseId ?? null); // 默认当前 KB
+    setSaveCatId(null);
+    setSaveCatTree(null);
+    setSaveModalOpen(true);
+    if (knowledgeBaseId) loadSaveCats(knowledgeBaseId);
+    knowledgeBaseApi
+      .list()
+      .then(({ data }) => setSaveKbList(data))
+      .catch(() => setSaveKbList([]));
+  };
+
+  const handleSaveKbChange = (kbId: number) => {
+    setSaveTargetKbId(kbId);
+    setSaveCatId(null);
+    setSaveCatTree(null);
+    loadSaveCats(kbId);
+  };
+
+  const handleSaveMessage = async () => {
+    if (!saveTargetKbId) {
+      message.warning("请选择目标知识库");
+      return;
+    }
+    if (!sse.conversationId) {
+      message.error("消息尚未持久化，无法保存");
+      return;
+    }
+    setSaving(true);
+    try {
+      // 消息 id 需向服务端解析：按内容匹配当前会话中最后一条相同内容的 assistant 消息
+      const { data: msgs } = await chatApi.getMessages(sse.conversationId);
+      const target = [...msgs]
+        .reverse()
+        .find((m) => m.role === "assistant" && m.content === saveContent);
+      if (!target) {
+        message.error("未能在服务端定位该消息，请刷新历史后重试");
+        return;
+      }
+      await chatApi.saveMessageToKb(target.id, saveTargetKbId, saveCatId);
+      message.success("已存入知识库，可在文档管理中查看");
+      setSaveModalOpen(false);
+      onDocSavedToKb?.();
+    } catch (err: unknown) {
+      const resp = (
+        err as { response?: { status?: number; data?: { detail?: string } } }
+      ).response;
+      message.error(resp?.data?.detail || "存入失败，请稍后再试");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const isPlainChat = !knowledgeBaseId;
 
   return (
@@ -521,6 +613,15 @@ export default function ChatWindow({
                         }}
                       />
                     </Tooltip>
+                    <Tooltip title="存为知识库文档">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<SaveOutlined />}
+                        className={styles.copyBtn}
+                        onClick={() => handleOpenSaveModal(msg.content)}
+                      />
+                    </Tooltip>
                   </div>
                 </>
               ) : (
@@ -697,6 +798,54 @@ export default function ChatWindow({
           onChange={handleFileChange}
         />
       </div>
+
+      {/* P0-4：存为知识库文档弹窗 */}
+      <Modal
+        title="存为知识库文档"
+        open={saveModalOpen}
+        onOk={handleSaveMessage}
+        onCancel={() => setSaveModalOpen(false)}
+        confirmLoading={saving}
+        okText="存入"
+        destroyOnClose
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4 }}>
+              目标知识库
+            </Typography.Text>
+            <Select
+              style={{ width: "100%" }}
+              placeholder="选择知识库"
+              value={saveTargetKbId ?? undefined}
+              onChange={handleSaveKbChange}
+              options={saveKbList.map((kb) => ({ value: kb.id, label: kb.name }))}
+            />
+          </div>
+          <div>
+            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4 }}>
+              目标目录（可选）
+            </Typography.Text>
+            <TreeSelect
+              style={{ width: "100%" }}
+              treeData={buildCategorySelectTree(saveCatTree?.categories ?? [])}
+              value={saveCatId ?? undefined}
+              onChange={(v) => setSaveCatId(v ?? null)}
+              placeholder="不选则存入「未归类」"
+              treeDefaultExpandAll
+              loading={saveCatLoading}
+              allowClear
+            />
+          </div>
+          <Typography.Paragraph
+            type="secondary"
+            ellipsis={{ rows: 3, expandable: true, symbol: "展开" }}
+            style={{ background: "#fafafa", padding: 8, borderRadius: 6, marginBottom: 0 }}
+          >
+            {saveContent}
+          </Typography.Paragraph>
+        </div>
+      </Modal>
     </div>
   );
 }

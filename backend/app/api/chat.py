@@ -15,7 +15,7 @@ from app.models.user import User
 from app.core.auth import require_user
 from app.core.rag_chain import rag_stream, plain_chat_stream
 from app.core.config import settings
-from app.services import agent_service, chat_service
+from app.services import agent_service, chat_service, document_service
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -264,4 +264,37 @@ async def upload_file_for_chat(
         "file_id": file_id,
         "filename": file.filename,
         "content": extracted_content,
+    }
+
+
+class SaveMessageToKBRequest(BaseModel):
+    kb_id: int
+    category_id: int | None = None
+
+
+@router.post("/messages/{message_id}/save-to-kb")
+async def save_message_to_kb(
+    message_id: int,
+    req: SaveMessageToKBRequest,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """消息存为知识库文档（P0-4 沉淀闭环）：校验消息归属 → 复用在线文档入库管道。
+
+    标题取所属会话标题截断（与 prepare_chat 的 question[:50] 对齐）；
+    消息归属 404 防枚举编排在 chat_service，KB 权限与入库编排在 document_service。
+    """
+    message, conversation = await chat_service.get_own_message(db, message_id, current_user)
+    doc = await document_service.create_online_document(
+        db, current_user, req.kb_id,
+        title=conversation.title[:50], content=message.content,
+        category_id=req.category_id,
+    )
+    return {
+        "detail": "Message saved to knowledge base",
+        "document_id": doc.id,
+        "kb_id": doc.knowledge_base_id,
+        "filename": doc.filename,
+        "source": doc.source,
+        "category_id": doc.category_id,
     }

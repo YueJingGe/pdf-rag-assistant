@@ -2,28 +2,88 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 16px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
-.header {
+.kbSwitcher {
   display: flex;
-  justify-content: space-between;
+  gap: 6px;
   align-items: center;
-  margin-bottom: 16px;
+  padding: 12px 12px 8px;
 }
 
-.item {
+.kbSelect {
+  flex: 1;
+  min-width: 0;
+}
+
+.actions {
+  padding: 0 12px 8px;
+}
+
+.nav {
+  padding: 0 8px;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
   cursor: pointer;
-  border-radius: 8px;
-  transition: background-color 0.2s;
+  color: #444;
+  font-size: 13px;
+  margin-bottom: 2px;
 
   &:hover {
-    background-color: #f0f5ff;
+    background: #f5f5f5;
   }
 }
 
-.selected {
-  background-color: #e6f4ff !important;
-  border-left: 3px solid #1677ff;
+.navIcon {
+  font-size: 14px;
+}
+
+.navActive {
+  background: #e6f4ff;
+  color: #1677ff;
+  font-weight: 600;
+
+  &:hover {
+    background: #e6f4ff;
+  }
+}
+
+.navDisabled {
+  color: #bbb;
+  cursor: not-allowed;
+
+  &:hover {
+    background: transparent;
+  }
+}
+
+.treeWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.userCard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid #f0f0f0;
+  flex-shrink: 0;
+}
+
+.userName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
 }

@@ -18,6 +18,27 @@ def save_upload_file(file_content: bytes, filename: str, knowledge_base_id: int)
     return file_path
 
 
+def slugify_title(title: str, max_len: int = 80) -> str:
+    """标题 → 安全文件名：保留中英文数字与 -_，其余字符替换为 -，超长截断（P0-4）。"""
+    chars = [
+        ch if (ch.isalnum() or ch in "-_") else "-"
+        for ch in title.strip().replace(" ", "-")
+    ]
+    slug = "".join(chars).strip("-")
+    return slug[:max_len] or "untitled"
+
+
+def save_text_as_md(title: str, text: str, knowledge_base_id: int) -> Path:
+    """Save text content as a .md file (for online documents, P0-4)."""
+    kb_dir = settings.upload_dir / str(knowledge_base_id)
+    kb_dir.mkdir(parents=True, exist_ok=True)
+
+    unique_name = f"{uuid.uuid4().hex}_{slugify_title(title)}.md"
+    file_path = kb_dir / unique_name
+    file_path.write_text(text, encoding="utf-8")
+    return file_path
+
+
 def delete_upload_file(file_path: str):
     """Delete an uploaded file from disk."""
     path = Path(file_path)

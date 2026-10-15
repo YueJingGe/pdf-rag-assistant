@@ -12,10 +12,17 @@ import {
   Input,
   Modal,
   Form,
+  TreeSelect,
 } from "antd";
 import { InboxOutlined, DeleteOutlined, EditOutlined } from "@ant-design/icons";
 import type { Key } from "react";
-import { documentApi, type DocumentInfo } from "../../services/api";
+import {
+  documentApi,
+  knowledgeBaseApi,
+  type DocumentInfo,
+  type CategoryInfo,
+} from "../../services/api";
+import { buildCategorySelectTree } from "../CategoryTree";
 import styles from "./index.module.less";
 
 const { Dragger } = Upload;
@@ -40,6 +47,9 @@ export default function DocumentUpload({ knowledgeBaseId, onDocChange }: Props) 
   const [renamingDoc, setRenamingDoc] = useState<DocumentInfo | null>(null);
   const [renameForm] = Form.useForm();
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // P0-4：上传挂目录
+  const [uploadCatId, setUploadCatId] = useState<number | null>(null);
+  const [catCategories, setCatCategories] = useState<CategoryInfo[]>([]);
 
   const fetchDocuments = async () => {
     if (!knowledgeBaseId) return;
@@ -47,9 +57,22 @@ export default function DocumentUpload({ knowledgeBaseId, onDocChange }: Props) 
     setDocuments(data);
   };
 
+  // P0-4：目录选择数据（上传挂目录用）
+  const loadCategories = async () => {
+    if (!knowledgeBaseId) return;
+    try {
+      const { data } = await knowledgeBaseApi.getTree(knowledgeBaseId);
+      setCatCategories(data.categories);
+    } catch {
+      setCatCategories([]);
+    }
+  };
+
   useEffect(() => {
     setDocuments([]);
+    setUploadCatId(null);
     fetchDocuments();
+    loadCategories();
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
@@ -93,7 +116,7 @@ export default function DocumentUpload({ knowledgeBaseId, onDocChange }: Props) 
             : f
         )
       );
-      await documentApi.upload(knowledgeBaseId, file);
+      await documentApi.upload(knowledgeBaseId, file, uploadCatId);
       setUploadingFiles((prev) =>
         prev.map((f) =>
           f.filename === file.name && f.status === "uploading"
@@ -186,6 +209,17 @@ export default function DocumentUpload({ knowledgeBaseId, onDocChange }: Props) 
       ellipsis: true,
     },
     {
+      title: "来源",
+      dataIndex: "source",
+      key: "source",
+      width: 90,
+      render: (source: string) => (
+        <Tag color={source === "online" ? "green" : "blue"}>
+          {source === "online" ? "在线创作" : "上传"}
+        </Tag>
+      ),
+    },
+    {
       title: "大小",
       dataIndex: "file_size",
       key: "file_size",
@@ -226,6 +260,20 @@ export default function DocumentUpload({ knowledgeBaseId, onDocChange }: Props) 
 
   return (
     <div className={styles.container}>
+      {/* P0-4：上传挂目录 */}
+      <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13, color: "#8c8c8c", flexShrink: 0 }}>上传到目录：</span>
+        <TreeSelect
+          style={{ flex: 1 }}
+          size="small"
+          treeData={buildCategorySelectTree(catCategories)}
+          value={uploadCatId ?? undefined}
+          onChange={(v) => setUploadCatId(v ?? null)}
+          placeholder="未归类（根目录）"
+          treeDefaultExpandAll
+          allowClear
+        />
+      </div>
       <Dragger
         accept=".pdf,.docx,.doc,.txt,.md"
         showUploadList={false}

@@ -1,0 +1,49 @@
+.container {
+  padding: 4px 0;
+
+  :global(.ant-tree-node-content-wrapper) {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+  }
+}
+
+.nodeTitle {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.nodeLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+  cursor: pointer;
+}
+
+.nodeStatus {
+  margin-left: 4px;
+  font-size: 12px;
+  color: #999;
+}
+
+.nodeMore {
+  margin-left: 6px;
+  padding: 0 4px;
+  color: #999;
+  border-radius: 4px;
+  visibility: hidden;
+  letter-spacing: 1px;
+  font-weight: 600;
+
+  &:hover {
+    background: #f0f0f0;
+    color: #333;
+  }
+}
+
+.container :global(.ant-tree-treenode:hover) .nodeMore {
+  visibility: visible;
+}

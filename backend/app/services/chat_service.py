@@ -140,6 +140,24 @@ async def get_messages(
     ]
 
 
+async def get_own_message(
+    db: AsyncSession, message_id: int, user: User
+) -> tuple[Message, Conversation]:
+    """加载消息及其会话并校验归属；不存在或非本人会话一律 NotFoundError（404 防枚举）。
+
+    P0-4「存为文档」前置校验：返回 (message, conversation)，会话标题用于生成文档名。
+    """
+    result = await db.execute(
+        select(Message, Conversation)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .where(Message.id == message_id, Conversation.user_id == user.id)
+    )
+    row = result.first()
+    if not row:
+        raise NotFoundError("Message not found")
+    return row[0], row[1]
+
+
 async def delete_conversation(
     db: AsyncSession, conversation_id: int, user: User
 ) -> None:

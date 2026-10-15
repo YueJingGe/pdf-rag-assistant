@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from app.models.database import init_db
 import app.models.user  # noqa: F401 - ensure tables are registered
 import app.models.feedback  # noqa: F401
+import app.models.category  # noqa: F401 - P0-4 目录树表（存量库由 scripts/migrate_p04_category.py 迁移）
 from app.api import knowledge_bases, documents, chat
 from app.api.auth import router as auth_router
 from app.api.feedback import router as feedback_router
