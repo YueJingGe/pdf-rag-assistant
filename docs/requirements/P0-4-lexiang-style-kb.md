@@ -1,7 +1,7 @@
 # P0-4 需求文档：乐享式知识库最小 demo（在线创作 + 目录树 + 沉淀闭环）
 
-> 版本：v1.0｜状态：**已确认（2026-10-15），进入实施**
-> 性质：纯增量功能开发。**承诺：RAG 禁区五文件（loader/splitter/retrieval/vector_store/rag_chain）零改动**，无需 RAGAS 回归
+> 版本：v1.1｜状态：**v1.0 已确认实施完成（2026-10-15，commit 60059d1）；v1.1 第二轮待用户确认**
+> 性质：纯增量功能开发。**承诺：RAG 禁区五文件（loader/splitter/retrieval/vector_store/rag_chain）零改动**，无需 RAGAS 回归（v1.1 多库合并链在 service 层实现，继续零改动）
 > 调研依据：腾讯乐享官网 + 产品实际截图（2026-10-15 会话）；定位"个人知识体系"场景（前端程序员举例，领域无关）
 > 与 P0-3b 关系：无冲突。P0 范围**零新增 LLM 调用**；P1 起 LLM 功能按 §3 成本纪律执行
 
@@ -146,3 +146,63 @@
 3. 后端 API（category/tree/online/save-to-kb/move）+ 零 LLM 自测脚本（`scripts/smoke_test_p04.py`：建目录→建文档→断言索引→更新→断言新旧内容→存消息→断言，全程检索层断言）
 4. 前端布局 + 目录树 + 工作台 + 存为文档
 5. 验收清单逐项跑 + changelog + 收尾 commit（经用户确认 message）
+
+---
+
+## 8. 第二轮需求（v1.1，2026-10-15）：概念对齐 + 管理页 + 对话内信息源
+
+> 第一轮交付后，用户对照乐享实际页面提出三条交互纠偏（原 P1 部分 item 提前）：
+> ① "通信/金融应是知识库下的目录，不是独立库"（概念模型对齐）；② 库名旁「⋯」hover 弹层 → 管理 → 独立页面 `/spaces`；③ 信息源移入对话输入区「+」弹层，默认选中个人知识库，支持多选知识范围。
+
+### 8.1 T1 数据重组迁移（通信/金融等库 → 个人知识库的目录）
+
+**最终形态**：每用户一个「个人知识库」，现有多个库降级为其下同名目录，文档、在线内容、会话历史全部跟走。
+
+- **脚本**：`scripts/migrate_kb_to_personal.py`
+  - `--user <username>`（必填）+ `--target-name`（默认"个人知识库"；已存在同名库则复用，否则新建）
+  - 对该用户名下除目标库外的每个源库：目标库创建同名目录（重名加 `-2` 后缀）→ 文档迁移：物理文件 `uploads/{src}/` move 至 `uploads/{dst}/`、DB 更新 `kb_id/category_id/file_path`（在线文档 content 列随行）→ `conversations.kb_id` 改指目标库 → 源库 FAISS 索引目录删除 → 源库行删除
+  - 迁移后目标库走既有 `_rebuild_kb_index` 重建（会产生 embedding API 调用，文档量小成本可忽略；脚本打印调用文档数）
+  - **安全设计**：默认 `--dry-run` 只打印迁移计划；`--apply` 才执行；执行前自动备份 `db.sqlite3`；源库不存在自动跳过（幂等）
+- **不做**：目录级检索过滤（乐享可勾目录粒度）需 chunks metadata 注入 category_id + retrieval 禁区过滤，列 P1；信息源多选粒度为**知识库级**
+
+### 8.2 T2+T3 知识库管理入口与 /spaces 页面
+
+- **入口**：左栏当前库名旁「⋯」（hover Dropdown）：分享（禁用占位）/ **管理** → `navigate('/spaces/:kbId')`；普通聊天态不显示
+- **路由**：引入 `react-router-dom`（新前端依赖，先 `npm view` 验内网镜像存在）：`/` = 现主界面，`/spaces/:kbId` = 管理页；vite dev 自带 SPA fallback；`nginx/default.conf` 补 `try_files $uri /index.html`
+- **管理页布局**（对齐乐享）：顶栏（← 返回 + 库名）+ 左侧菜单：**基本信息** / **目录与文档** / 成员与权限（禁用占位）/ 回收站（禁用占位）
+  - 基本信息：库名称 + 简介编辑保存（复用既有 KB update 接口；简介字段若接口不支持则仅名称，实施时核实）
+  - 目录与文档：复用 CategoryTree（canManage）+ DocumentUpload，左右布局
+  - 权限：owner/admin 可编辑；viewer 只读提示
+- 原 Select 切库器保留（多库仍是架构事实），仅新增管理入口
+
+### 8.3 T4 对话内信息源（+ 弹层）
+
+- **ChatWindow 输入区**左下「+」按钮 → Popover 弹层（对齐乐享）：
+  - 顶部 Segmented「问答模式 | Agent模式」（替代现 header 的 Agent Switch）
+  - **信息源**行（显示已选数）→ 展开选择面板：「全部知识」快捷项（=全选我的库）+ 库列表多选 Checkbox（默认勾选当前库）+ 确认
+  - 上传图片 / 上传文件 入口并入（普通聊天态）
+- **状态**：`sourceKbIds: number[]` 内部 state（默认 `[当前选中库]`）；`sourceKbIds.length === 0` 即普通聊天；HyDE/调试开关保留 header；会话归属第一个选中库（主库）
+- **后端**（向后兼容）：`/chat/query` 增可选 `knowledge_base_ids` 数组参数（每个库校验读权限）
+  - **单库/空 = 现有链路字节不变**（HyDE/语义缓存/Agent 全量能力）
+  - **多选 = service 层"多库合并链"**：逐库调 retrieval_service 现有检索 → 按归一化分数合并重排截断 top_k → `llm_gateway` rag_generate 生成 + 引用组装，SSE 事件结构与单库一致（前端无感）；**多选模式不支持 HyDE/语义缓存（界面标注）；Agent 模式多选时作用于主库（Tooltip 说明）**
+  - **禁区声明：方案甲，五文件零改动**。理由：rag_chain 支持 kb_ids 属禁区改动，须 RAGAS 回归，当前 judge API 不可用会阻塞交付；合并链在 chat_service/retrieval_service 层新增编排，检索原语复用禁区公开函数。风险：合并链与主链路 prompt 存在副本维护成本（注明来源行号，P1 收敛）
+- 验收断言全程检索层/HTTP 层，零新增 LLM 调用（多库合并链的生成层断言用 mock/SSE 事件序列）
+
+### 8.4 第二轮验收标准
+
+| # | 项 | 通过标准 |
+|---|---|---|
+| 1 | 数据迁移 | dry-run 打印计划不落库；apply 后单「个人知识库」含同名目录、文档归位、检索命中、引用溯源指向正确文件；会话历史可见；源库删除；重复执行幂等跳过 |
+| 2 | 管理入口 | 「⋯」hover 弹层 → 管理 → `/spaces/:kbId`；基本信息保存生效；目录与文档可管理；刷新直链可打开（nginx try_files） |
+| 3 | 信息源 | 默认勾选当前库；多选两库提问，citations 来自两库（SSE 结构与单库一致）；单库问答能力不回归；Agent+多选作用于主库 |
+| 4 | 禁区 | 五文件 diff 仍为空 |
+| 5 | 质量门 | py_compile / tsc -b 过；smoke_test_p04 回归绿；迁移脚本 dry-run/幂等验证 |
+| 6 | 收尾 | changelog 第二轮追加、README/重难点同步、package.json（react-router-dom）登记、后端重启 |
+
+### 8.5 第二轮实施顺序
+
+1. 基线 commit（经用户确认 message）
+2. T1 迁移脚本（dry-run 验证 → **用户执行 apply**，涉及 embedding 调用与数据变更）
+3. T2 路由 + T3 管理页
+4. T4 信息源（前端弹层 + 后端多库合并链 + 冒烟扩展）
+5. 验收清单 + changelog 第二轮 + 收尾 commit（经用户确认 message）
