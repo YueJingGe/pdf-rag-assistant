@@ -22,6 +22,8 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 class ChatRequest(BaseModel):
     knowledge_base_id: int | None = None
+    # P0-4 第二轮：多库信息源（len>1 时走 service 层多库合并链；单元素/空忽略，向后兼容）
+    knowledge_base_ids: list[int] | None = None
     question: str
     conversation_id: int | None = None
     use_hyde: bool = False
@@ -45,24 +47,46 @@ async def chat_stream(
     current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # P0-4 第二轮：多库信息源判定（len>1 走多库合并链；单库/空路径行为不变）
+    multi_kb_ids = [kb for kb in (req.knowledge_base_ids or []) if kb]
+    is_multi_kb = len(multi_kb_ids) > 1
+    primary_kb_id = multi_kb_ids[0] if is_multi_kb else req.knowledge_base_id
     # Determine if this is a plain chat (no KB) or RAG chat
-    is_plain_chat = req.knowledge_base_id is None or req.knowledge_base_id == 0
+    is_plain_chat = primary_kb_id is None or primary_kb_id == 0
+
+    # 多库：SSE 流开始前逐库读权限校验（越权 403，不进事件流）
+    if is_multi_kb:
+        await chat_service.check_multi_kb_access(db, multi_kb_ids, current_user)
 
     # 权限校验、会话获取/创建、历史加载、用户消息持久化下沉 chat_service（D3：SSE 事件组装留路由层）
+    # 多库时会话挂主信息源（第一个选中库）
     conversation, chat_history = await chat_service.prepare_chat(
-        db, req.knowledge_base_id, req.question, req.conversation_id, current_user
+        db, primary_kb_id, req.question, req.conversation_id, current_user
     )
     await chat_service.save_user_message(
         db, conversation.id, req.question, req.images, req.file_name
     )
 
-    return EventSourceResponse(_chat_sse_events(db, req, conversation, chat_history, is_plain_chat=is_plain_chat))
+    return EventSourceResponse(
+        _chat_sse_events(
+            db, req, conversation, chat_history,
+            is_plain_chat=is_plain_chat,
+            primary_kb_id=primary_kb_id,
+            multi_kb_ids=multi_kb_ids if is_multi_kb else None,
+        )
+    )
 
 
 async def _chat_sse_events(
-    db: AsyncSession, req: ChatRequest, conversation, chat_history, *, is_plain_chat: bool
+    db: AsyncSession, req: ChatRequest, conversation, chat_history, *,
+    is_plain_chat: bool, primary_kb_id: int | None = None,
+    multi_kb_ids: list[int] | None = None,
 ):
-    """老端点 SSE 生成器（P0-3a 提取：/stream 与 /agent/stream 的 plain/rag 分支共用，行为零变化）。"""
+    """老端点 SSE 生成器（P0-3a 提取：/stream 与 /agent/stream 的 plain/rag 分支共用）。
+
+    P0-4 第二轮：多库信息源（multi_kb_ids len>1）时 rag 分支切换为 service 层多库
+    合并链（chunk 协议与 rag_stream 一致）；否则走单库 rag_stream，行为零变化。
+    """
     full_answer = ""
     citations = []
 
@@ -84,9 +108,18 @@ async def _chat_sse_events(
             elif chunk["type"] == "done":
                 yield {"event": "done", "data": json.dumps({"content": full_answer})}
     else:
-        async for chunk in rag_stream(
-            req.knowledge_base_id, req.question, chat_history, use_hyde=req.use_hyde
-        ):
+        if multi_kb_ids and len(multi_kb_ids) > 1:
+            # 多库合并链（service 层方案甲）：不支持 HyDE，chunk 协议与单库一致
+            stream = chat_service.multi_kb_rag_stream(
+                multi_kb_ids, req.question, chat_history
+            )
+        else:
+            # 单库路径：primary_kb_id 缺省时回落 req.knowledge_base_id（agent 转发路径不传）
+            rag_kb_id = primary_kb_id if primary_kb_id is not None else req.knowledge_base_id
+            stream = rag_stream(
+                rag_kb_id, req.question, chat_history, use_hyde=req.use_hyde
+            )
+        async for chunk in stream:
             if chunk["type"] == "token":
                 full_answer += chunk["content"]
                 yield {"event": "token", "data": json.dumps({"content": chunk["content"]})}

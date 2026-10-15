@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import AsyncIterator
+
 from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import User, get_kb_or_raise
-from app.core.rag_chain import rag_query
+from app.core.config import settings
+from app.core.llm_gateway import get_llm
+from app.core.rag_chain import (
+    RAG_PROMPT,
+    _build_citations,
+    _deduplicate_documents,
+    _format_context,
+    _to_langchain_messages,
+    _trim_chat_history,
+    rag_query,
+    retrieve_with_strategy,
+)
+from app.utils.logging import get_langfuse_handler, logger
 from app.models.conversation import Conversation, Message
 from app.services.exceptions import (
     ConflictError,
@@ -206,3 +221,94 @@ async def query_rag(
         raise  # 领域异常直接透传，保持 404/403 语义
     except Exception as exc:
         raise ServiceError(f"RAG query failed: {exc}")
+
+
+# ======================== P0-4 第二轮：多库合并链（方案甲，需求 §8.3） ========================
+
+async def check_multi_kb_access(db: AsyncSession, kb_ids: list[int], user: User) -> None:
+    """多库信息源：SSE 流开始前逐库读权限校验（越权 403，不进事件流）。"""
+    for kb_id in kb_ids:
+        await get_kb_or_raise(kb_id, user, "viewer", db)
+
+
+async def multi_kb_retrieve(kb_ids: list[int], question: str) -> list:
+    """逐库检索 → metadata 标记来源库 → RRF 分数降序合并 → 去重 → 截断 top_k。
+
+    禁区文件只读引用：retrieve_with_strategy / _deduplicate_documents 原样调用，
+    单库检索逻辑零复制零修改（方案甲核心约束，需求 §8.3）。
+    RRF 分数只依赖库内名次（同 rank 同分），跨库天然可比，无需归一化。
+    """
+    flat: list = []
+    for kb_id in kb_ids:
+        docs = await retrieve_with_strategy(kb_id, question, use_hyde=False)
+        for doc in docs:
+            doc.metadata["knowledge_base_id"] = kb_id  # 来源库标记（引用/调试归因用）
+            flat.append(doc)
+    merged = sorted(flat, key=lambda d: d.metadata.get("score", 0.0), reverse=True)
+    return _deduplicate_documents(merged)[: settings.retrieval_top_k]
+
+
+async def multi_kb_rag_stream(
+    kb_ids: list[int],
+    question: str,
+    chat_history: list[dict] | None = None,
+) -> AsyncIterator[dict]:
+    """多库信息源流式问答：SSE chunk 协议与 rag_stream 一致
+    （retrieval_debug / token / citations / done），路由层与前端零改动兼容。
+
+    与单库 rag_stream 的差异（需求 §8.3 明确）：
+    - 不支持 HyDE（逐库生成假设文档成本翻倍）与语义缓存（跨库缓存键不成立）
+    - 生成走 llm_gateway get_llm("rag_generate")（P0-3b 网关角色，与 rag_chain 内部工厂等价）
+    """
+    start_time = time.time()
+    trimmed_history = _trim_chat_history(chat_history)
+    retrieved_docs = await multi_kb_retrieve(kb_ids, question)
+    retrieval_time_ms = int((time.time() - start_time) * 1000)
+
+    yield {"type": "retrieval_debug", "content": {
+        "chunks": [
+            {"content": doc.page_content, "metadata": doc.metadata}
+            for doc in retrieved_docs
+        ],
+        "retrieval_time_ms": retrieval_time_ms,
+        "strategy": "multi_kb",
+    }}
+
+    context = _format_context(retrieved_docs)
+    citations = _build_citations(retrieved_docs, question)
+    messages = _to_langchain_messages(trimmed_history)
+
+    llm = get_llm("rag_generate", streaming=True)
+    chain = RAG_PROMPT | llm
+
+    kwargs: dict = {
+        "context": context,
+        "chat_history": messages,
+        "question": question,
+    }
+    config: dict = {}
+    langfuse_handler = get_langfuse_handler()
+    if langfuse_handler:
+        config["callbacks"] = [langfuse_handler]
+        langfuse_handler.metadata = {
+            "knowledge_base_ids": kb_ids,
+            "strategy": "multi_kb",
+            "history_rounds": len(trimmed_history) // 2,
+            "retrieval_time_ms": retrieval_time_ms,
+        }
+
+    full_answer = ""
+    async for chunk in chain.astream(kwargs, config=config):
+        token = chunk.content
+        if token:
+            full_answer += token
+            yield {"type": "token", "content": token}
+
+    total_time_ms = int((time.time() - start_time) * 1000)
+    logger.info(
+        f"Multi-KB RAG query completed: kbs={kb_ids}, "
+        f"retrieval={retrieval_time_ms}ms, total={total_time_ms}ms"
+    )
+
+    yield {"type": "citations", "content": citations}
+    yield {"type": "done", "content": full_answer}

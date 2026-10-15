@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Select,
   Button,
@@ -23,6 +24,7 @@ import {
   HomeOutlined,
   UploadOutlined,
   SettingOutlined,
+  ToolOutlined,
 } from "@ant-design/icons";
 import CategoryTree, { type OpenableDoc } from "../CategoryTree";
 import { knowledgeBaseApi, type KnowledgeBase, type UserInfo } from "../../services/api";
@@ -77,6 +79,7 @@ export default function KnowledgeBaseSidebar({
   onOpenDoc,
   onOpenViewer,
 }: Props) {
+  const navigate = useNavigate();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -155,9 +158,10 @@ export default function KnowledgeBaseSidebar({
         </Tooltip>
         {current && (
           <Dropdown
-            trigger={["click"]}
+            trigger={["hover"]}
             menu={{
               items: [
+                { key: "manage", label: "管理", icon: <ToolOutlined /> },
                 { key: "rename", label: "重命名知识库", icon: <EditOutlined /> },
                 {
                   key: "delete",
@@ -167,6 +171,7 @@ export default function KnowledgeBaseSidebar({
                 },
               ],
               onClick: ({ key }) => {
+                if (key === "manage") navigate(`/spaces/${current.id}`);
                 if (key === "rename") openRenameModal(current);
                 if (key === "delete") {
                   Modal.confirm({

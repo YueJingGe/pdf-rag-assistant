@@ -21,6 +21,7 @@ os.chdir(BACKEND_DIR)
 
 from sqlalchemy import select  # noqa: E402
 
+from app.core.config import settings  # noqa: E402
 from app.models.category import Category  # noqa: E402
 from app.models.conversation import Conversation  # noqa: E402
 from app.models.database import async_session_factory  # noqa: E402
@@ -42,6 +43,7 @@ from app.services.exceptions import (  # noqa: E402
 
 MARKER_V1 = "P04冒烟标记甲：萤火虫发光原理是荧光素酶催化。"
 MARKER_V2 = "P04冒烟标记乙：海马爸爸负责育儿袋孵化。"
+MARKER_KB2 = "P04冒烟标记丙：北极星指示正北方向。"
 SAVE_MSG_MARKER = "P04存档标记：这条回答被沉淀回知识库。"
 
 
@@ -250,6 +252,88 @@ async def main() -> None:
                 gone is None and child.parent_id is None and moved_doc.category_id is None,
                 "⑪ 删除目录 → 子目录上提为根、文档移至根（不删文档）",
             )
+
+            # ⑫ 多库信息源（P0-4 第二轮 §8）：检索合并 + SSE 协议 + 权限负例
+            # 第二库塞不同 marker 的在线文档，形成跨库两库可检索格局
+            doc_kb2 = await document_service.create_online_document(
+                db, user, temp_kb2.id,
+                title="北极星笔记", content=f"# 笔记\n\n{MARKER_KB2}\n",
+                category_id=cat_other.id,
+            )
+            _check(doc_kb2.status == "ready", "⑫ 第二库在线文档入库 ready")
+
+            merged = await chat_service.multi_kb_retrieve(
+                [temp_kb.id, temp_kb2.id], "海马 北极星"
+            )
+            merged_texts = [d.page_content for d in merged]
+            _check(
+                any("冒烟标记乙" in t for t in merged_texts),
+                "⑫ 跨库合并命中库 1 内容",
+            )
+            _check(
+                any("冒烟标记丙" in t for t in merged_texts),
+                "⑫ 跨库合并命中库 2 内容",
+            )
+            _check(
+                all(
+                    d.metadata.get("knowledge_base_id") in (temp_kb.id, temp_kb2.id)
+                    for d in merged
+                ),
+                "⑫ 合并结果 metadata 标记来源库",
+            )
+            _check(
+                len(merged) <= settings.retrieval_top_k,
+                f"⑫ 合并结果截断 ≤ retrieval_top_k({settings.retrieval_top_k})",
+            )
+
+            # SSE 协议：网关替换为 FakeListChatModel（零真实 LLM），断言 chunk 序列与单库对齐
+            from langchain_core.language_models.fake_chat_models import (  # noqa: E402
+                FakeListChatModel,
+            )
+            original_get_llm = chat_service.get_llm
+            chat_service.get_llm = (  # type: ignore[assignment]
+                lambda *a, **k: FakeListChatModel(responses=["多库合并链路OK"])
+            )
+            try:
+                events = []
+                async for ev in chat_service.multi_kb_rag_stream(
+                    [temp_kb.id, temp_kb2.id], "海马 北极星"
+                ):
+                    events.append(ev)
+            finally:
+                chat_service.get_llm = original_get_llm  # type: ignore[assignment]
+            _check(
+                events[0]["type"] == "retrieval_debug" and events[-1]["type"] == "done",
+                "⑫ SSE 事件首=retrieval_debug、尾=done（协议对齐单库）",
+            )
+            _check(
+                events[0]["content"]["strategy"] == "multi_kb",
+                "⑫ retrieval_debug.strategy=multi_kb",
+            )
+            token_evs = [e for e in events if e["type"] == "token"]
+            _check(
+                len(token_evs) > 0
+                and "".join(e["content"] for e in token_evs) == "多库合并链路OK",
+                "⑫ token 事件来自 fake 网关（零 LLM）",
+            )
+            citations_ev = next(e for e in events if e["type"] == "citations")
+            _check(
+                isinstance(citations_ev["content"], list)
+                and len(citations_ev["content"]) > 0,
+                "⑫ citations 非空（引用组装复用禁区公开逻辑）",
+            )
+
+            # 权限负例：多库合并链任一库无读权限 → PermissionDeniedError（SSE 前拦截）
+            if other:
+                try:
+                    await chat_service.check_multi_kb_access(
+                        db, [temp_kb.id, temp_kb2.id], other
+                    )
+                    _check(False, "⑫ 他人多库合并链应 PermissionDeniedError")
+                except PermissionDeniedError:
+                    print("✓ 他人无读权限 → PermissionDeniedError（403，SSE 前拦截）")
+            else:
+                print("⚠ 无其他用户，跳过 ⑫ 权限负例")
 
         finally:
             await kb_service.delete_kb(db, user, temp_kb.id)

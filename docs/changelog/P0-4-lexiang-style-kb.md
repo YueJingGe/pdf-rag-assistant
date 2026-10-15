@@ -1,6 +1,75 @@
 # P0-4 乐享式知识库最小 demo — changelog
 
-> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15）｜基线 commit：`ba6837d`（docs(p0-4): 需求文档 v1.0 定稿）
+> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）
+
+## 第二轮：交互对齐乐享（2026-10-15）
+
+按需求 §8 实施：基线 commit `af72e3d` → T1 数据迁移脚本 → T2 路由 → T3 /spaces 管理页 → T4 对话内信息源（前后端）→ 冒烟扩展。**RAG 禁区五文件 diff 为空（git diff 复查），多库合并链落在 service 层（方案甲），全程零新增 LLM 调用（生成走 P0-3b 网关）。**
+
+### 改动文件清单
+
+**T1 数据迁移（多库 → 个人知识库 + 目录）**
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/migrate_kb_to_personal.py` | 新建（280 行）：--user/--target-name/--apply，dry-run 默认；自动备份 .bak-p04r2；apply 前检测 8000 端口占用拒绝执行；文档物理文件 move + DB（documents/conversations 改指）+ 删源库 FAISS 目录 + 删源库行；失败回滚并打印已移动文件；幂等 |
+
+**T2 路由 + T3 /spaces 管理页**
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/package.json` | + `react-router-dom ^7.18.4`（v7 兼容 v6 API） |
+| `frontend/src/index.tsx` | BrowserRouter 包裹 ConfigProvider |
+| `frontend/src/App.tsx` | 重写为路由容器（77 行）：登录门控 + Routes（"/"→MainPage、"/spaces/:kbId"→SpacesPage、"*"→Navigate）；登录页/LoginModal/401 listener 留此层 |
+| `frontend/src/pages/MainPage/` | 新建（228 行）：承接原 App 主界面；新增 location.state.openDoc 消费（/spaces 点击在线文档跨页打开工作台，消费后清 state 防刷新重复） |
+| `frontend/src/pages/SpacesPage/` | 新建（index.tsx 229 行 + less）：顶栏返回 + 左侧菜单（基本信息/目录与文档/成员与权限 disabled/回收站 disabled）+ 基本信息表单（403 特判提示）+ 目录与文档（CategoryTree + DocumentUpload 左右布局）+ 删除知识库 |
+| `frontend/src/components/KnowledgeBaseSidebar/` | 「⋯」Dropdown 改 hover 触发 + 新增「管理」项 → navigate(`/spaces/${current.id}`) |
+
+**T4 对话内信息源（乐享式「+」弹层）**
+
+| 文件 | 改动 |
+|---|---|
+| `backend/app/api/chat.py` | ChatRequest 增 `knowledge_base_ids`（len>1 生效，向后兼容）；chat_stream 多库判定（primary_kb_id=首库，会话挂主库）+ SSE 前逐库读权限校验；_chat_sse_events 增多库分支（chunk 协议与单库一致）；agent 转发路径不受影响（primary_kb_id 缺省回落 req.knowledge_base_id） |
+| `backend/app/services/chat_service.py` | 新增三函数：check_multi_kb_access（逐库 viewer 校验）/ multi_kb_retrieve（逐库 retrieve_with_strategy → metadata 标记来源库 → RRF 分数降序合并 → 去重 → 截断 retrieval_top_k）/ multi_kb_rag_stream（SSE chunk 协议对齐 rag_stream：retrieval_debug(strategy=multi_kb)/token/citations/done；不支持 HyDE/语义缓存；生成走 get_llm("rag_generate")） |
+| `frontend/src/hooks/useSSE.ts` | SendOptions 增 `knowledgeBaseIds`（len>1 且非 Agent 才入 body） |
+| `frontend/src/components/ChatWindow/` | sourceKbIds state（默认当前库，空=普通聊天）；「+」Popover（问答/Agent Segmented + 信息源多选 Checkbox.Group + 全部知识快捷 + 上传入口并入）；移除 header Agent Switch（入口移弹层）；多库信息源 Tag 行；HyDE 多库禁用；多库隐藏检索调试按钮 |
+
+**冒烟扩展**
+
+- `scripts/smoke_test_p04.py` 追加 ⑫ 场景（9 断言）：跨库合并命中两库内容 / metadata 来源库标记 / 截断 ≤ retrieval_top_k / SSE 事件序列首尾与 strategy=multi_kb / fake 网关 token（零 LLM）/ citations 非空 / 他人无读权限 403（SSE 前拦截）。全量 33 断言绿。
+
+### 关键设计摘要
+
+- **禁区零改动实现方式**：service 层直接 import 禁区公开函数（retrieve_with_strategy/RAG_PROMPT）与内部纯函数（_format_context/_build_citations/_trim_chat_history/_to_langchain_messages/_deduplicate_documents）——比需求 §8.3 预设的"prompt 副本"更优：零复制零漂移，副本维护成本 P1 风险直接消除；禁区文件本体一个字节未动
+- **RRF 分数跨库直接可比**（同 rank 同分，RRF 设计优点），无需归一化；单库检索逻辑零复制
+- **多库范围**：不支持 HyDE/语义缓存（前端禁用+后端忽略）；Agent 模式多选时仅作用主库（前端不传 ids，agent 端点天然兼容）
+- **nginx 零改动**：需求原假设需补 try_files，核实生产 Dockerfile 也是 vite dev（proxy 直通），SPA fallback 由 vite 自带，需求假设修正
+
+### 验收结果（需求 §8.4 对照）
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | T1 迁移脚本安全验证 | ✅ py_compile / dry-run 计划正确 / apply 保护（8000 占用拒跑）三项过；**apply + rebuild_index 留用户执行** |
+| 2 | 「⋯」hover 弹层 → 管理入口 → /spaces | ✅ tsc -b 零错误 |
+| 3 | /spaces 管理页（基本信息/目录与文档/在线文档跨页打开） | ✅ tsc -b 零错误 |
+| 4 | 对话「+」弹层（问答/Agent + 信息源多选） | ✅ tsc -b 零错误 |
+| 5 | 多库合并链（检索层断言） | ✅ 冒烟 ⑫ 九断言全绿（跨库命中/来源标记/截断/SSE 协议对齐/citations/403） |
+| 6 | 单库与普通聊天路径回归 | ✅ 冒烟全量 33 断言绿（原 24 + 新 9）；禁区五文件 git diff 为空 |
+| — | 集成面 | ✅ 后端重启 /docs 200；tsc -b / py_compile 全过 |
+
+### 遇到的问题
+
+1. **SearchReplace 批量替换部分失败**：Sidebar 改造 4 个替换中 import 块因缩进不匹配失败，当时误判无需重试，tsc 报 `Cannot find name 'useNavigate'` 才暴露；修复后建立"批量替换后必跑 tsc"动作。
+2. **P0-3b 网关已落地而 AGENTS.md 进度标注滞后**：llm_gateway.py 已存在且 rag_chain 内部工厂已收敛，多库链直接 get_llm("rag_generate")，无需自建实例化点。
+3. **documents 表列名**：迁移脚本查询初版误用 kb_id（实际为 knowledge_base_id），PRAGMA 核实后修正。
+
+### 遗留事项（P1）
+
+- **T1 迁移 apply + rebuild_index 由用户执行**（涉及 embedding 调用，不自动跑）
+- 多库会话挂主库：普通聊天页签发起的多库会话归主库页签，切页签可见性按页签库过滤（乐享式归属的固有行为）
+- 多库 chunk 级反馈：多库时隐藏调试入口（避免 chunk 归属错库），按 metadata.knowledge_base_id 归属上报留 P1
+- 信息源目录级粒度（选到目录而非库）需 metadata 注入 category_id + 禁区过滤参数，P1
+- 多库 RAGAS 回归不适用：禁区零改动，无需基线对比
 
 ## 第一轮：全量实施（2026-10-15）
 
