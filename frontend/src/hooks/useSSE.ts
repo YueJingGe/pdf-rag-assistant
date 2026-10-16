@@ -17,6 +17,8 @@ interface SendOptions {
   knowledgeBaseId: number | null;
   // P0-4 第二轮：多库信息源（len>1 时后端走多库合并链；Agent 模式不传，仅作用主库）
   knowledgeBaseIds?: number[];
+  // P0-4 第三轮（T7/T8）：文档级信息源（与 knowledgeBaseId 同传时后端切 doc_scoped 轻流式，不落会话）
+  documentId?: number;
   question: string;
   conversationId?: number;
   useHyde?: boolean;
@@ -41,7 +43,7 @@ export function useSSE() {
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(async (options: SendOptions) => {
-    const { knowledgeBaseId, knowledgeBaseIds, question, conversationId, useHyde = false, images, fileContent, fileName, webSearch, useAgent = false } = options;
+    const { knowledgeBaseId, knowledgeBaseIds, documentId, question, conversationId, useHyde = false, images, fileContent, fileName, webSearch, useAgent = false } = options;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -65,6 +67,9 @@ export function useSSE() {
       };
       if (!useAgent && knowledgeBaseIds && knowledgeBaseIds.length > 1) {
         body.knowledge_base_ids = knowledgeBaseIds;
+      }
+      if (documentId) {
+        body.document_id = documentId;
       }
       if (images && images.length > 0) {
         body.images = images;

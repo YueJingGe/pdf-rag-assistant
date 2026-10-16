@@ -1,0 +1,91 @@
+.container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 16px 24px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  flex-shrink: 0;
+}
+
+.titleGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.titleEdit {
+  color: #999;
+  cursor: pointer;
+  font-size: 13px;
+
+  &:hover {
+    color: #1677ff;
+  }
+}
+
+.toolbarActions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.rows {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-top: 8px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #333;
+
+  &:hover {
+    background: #f5f7fa;
+
+    .rowMore {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+}
+
+.rowName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 同目录树「···」方案：opacity + pointer-events，避免 visibility hover 时序问题 */
+.rowMore {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  color: #999;
+  cursor: pointer;
+  padding: 0 6px;
+  font-size: 14px;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+
+  &:hover {
+    color: #1677ff;
+  }
+}

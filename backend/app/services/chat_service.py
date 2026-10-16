@@ -23,6 +23,7 @@ from app.core.rag_chain import (
 )
 from app.utils.logging import get_langfuse_handler, logger
 from app.models.conversation import Conversation, Message
+from app.models.document import Document
 from app.services.exceptions import (
     ConflictError,
     NotFoundError,
@@ -312,3 +313,98 @@ async def multi_kb_rag_stream(
 
     yield {"type": "citations", "content": citations}
     yield {"type": "done", "content": full_answer}
+
+
+# ---- P0-4 第三轮（T8）：文档级问答（信息源=单个文档；service 层后过滤，禁区零触碰） ----
+
+
+async def check_doc_access(
+    db: AsyncSession, kb_id: int, document_id: int, user: User
+) -> None:
+    """文档级问答前置校验：kb 读权限（403）+ 文档存在且属于该 kb（404 防串库枚举）。"""
+    await get_kb_or_raise(kb_id, user, "viewer", db)
+    doc = await db.get(Document, document_id)
+    if not doc or doc.knowledge_base_id != kb_id:
+        raise NotFoundError("Document not found")
+
+
+async def doc_retrieve(kb_id: int, document_id: int, question: str) -> list:
+    """文档级检索：常规混合检索候选 → 按 chunk metadata.document_id 后过滤 → 截断 top_k。
+
+    禁区零触碰：retrieve_with_strategy 只读引用；候选量即其默认返回（settings.retrieval_top_k，
+    hybrid_merge 截断后的全库最优集）。document_id 由入库管道写入 metadata（document_service）。
+    过滤后为空返回 []（上层 yield「文档中未找到相关内容」提示，不进 LLM）。
+    """
+    candidates = await retrieve_with_strategy(kb_id, question, use_hyde=False)
+    scoped = [d for d in candidates if d.metadata.get("document_id") == document_id]
+    return scoped[: settings.retrieval_top_k]
+
+
+async def doc_rag_stream(
+    kb_id: int,
+    document_id: int,
+    question: str,
+    chat_history: list[dict] | None = None,
+) -> AsyncIterator[dict]:
+    """文档级问答流式：SSE chunk 协议与 multi_kb_rag_stream 同款（strategy="doc_scoped"）。
+
+    与 multi_kb 链同样不走 HyDE/语义缓存；生成走 llm_gateway get_llm("rag_generate")。
+    轻流式：调用方（路由层）不创建会话、不持久化消息（信息源=文档/全部知识两档均不落会话）。
+    """
+    start_time = time.time()
+    trimmed_history = _trim_chat_history(chat_history)
+    retrieved_docs = await doc_retrieve(kb_id, document_id, question)
+    retrieval_time_ms = int((time.time() - start_time) * 1000)
+
+    yield {"type": "retrieval_debug", "content": {
+        "chunks": [
+            {"content": doc.page_content, "metadata": doc.metadata}
+            for doc in retrieved_docs
+        ],
+        "retrieval_time_ms": retrieval_time_ms,
+        "strategy": "doc_scoped",
+    }}
+
+    if not retrieved_docs:
+        hint = "文档中未找到与问题相关的内容，请换个问法，或在信息源中切换为全部知识。"
+        yield {"type": "token", "content": hint}
+        yield {"type": "citations", "content": []}
+        yield {"type": "done", "content": hint}
+        return
+
+    context = _format_context(retrieved_docs)
+    citations = _build_citations(retrieved_docs, question)
+    messages = _to_langchain_messages(trimmed_history)
+
+    llm = get_llm("rag_generate", streaming=True)
+    chain = RAG_PROMPT | llm
+    kwargs: dict = {
+        "context": context,
+        "chat_history": messages,
+        "question": question,
+    }
+    config: dict = {}
+    langfuse_handler = get_langfuse_handler()
+    if langfuse_handler:
+        config["callbacks"] = [langfuse_handler]
+        langfuse_handler.metadata = {
+            "knowledge_base_id": kb_id,
+            "document_id": document_id,
+            "strategy": "doc_scoped",
+            "retrieval_time_ms": retrieval_time_ms,
+        }
+
+    full_answer = ""
+    async for chunk in chain.astream(kwargs, config=config):
+        token = chunk.content
+        if token:
+            full_answer += token
+            yield {"type": "token", "content": token}
+
+    yield {"type": "citations", "content": citations}
+    yield {"type": "done", "content": full_answer}
+    total_time_ms = int((time.time() - start_time) * 1000)
+    logger.info(
+        f"Doc-scoped RAG query completed: kb={kb_id}, doc={document_id}, "
+        f"chunks={len(retrieved_docs)}, retrieval={retrieval_time_ms}ms, total={total_time_ms}ms"
+    )

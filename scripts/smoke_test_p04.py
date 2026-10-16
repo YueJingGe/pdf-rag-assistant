@@ -364,6 +364,102 @@ async def main() -> None:
                 "⑬ 删库级联：uploads 物理目录已删",
             )
 
+            # ⑭ 文档级问答（P0-4 第三轮 §9 T8）：doc_retrieve 后过滤隔离 + doc_rag_stream SSE 协议
+            # 干扰文档：同库不同 marker，验证 document_id 过滤的跨文档隔离
+            interference_doc = await document_service.create_online_document(
+                db, user, temp_kb.id,
+                title="干扰文档", content="P04冒烟标记丁：这份文档仅用于文档级隔离测试。\n",
+                category_id=None,
+            )
+            _check(interference_doc.status == "ready", "⑭ 干扰文档入库 ready")
+
+            scoped = await chat_service.doc_retrieve(temp_kb.id, online_doc.id, "海马 育儿袋")
+            _check(
+                len(scoped) > 0
+                and all(d.metadata.get("document_id") == online_doc.id for d in scoped),
+                "⑭ doc_retrieve 全部命中目标文档（metadata.document_id 过滤）",
+            )
+            _check(
+                any("冒烟标记乙" in d.page_content for d in scoped),
+                "⑭ 目标文档内容命中",
+            )
+            _check(
+                not any("冒烟标记丁" in d.page_content for d in scoped),
+                "⑭ 跨文档隔离：干扰文档内容不出现",
+            )
+            _check(
+                len(scoped) <= settings.retrieval_top_k,
+                f"⑭ 截断 ≤ retrieval_top_k({settings.retrieval_top_k})",
+            )
+
+            # 不存在文档 id → 过滤后为空（上层 yield「未找到」提示，不进 LLM）
+            empty_scoped = await chat_service.doc_retrieve(temp_kb.id, 999999, "海马")
+            _check(empty_scoped == [], "⑭ 不存在文档 id → 候选过滤后为空")
+
+            # 归属校验：不存在文档 404；他人无读权限 403
+            try:
+                await chat_service.check_doc_access(db, temp_kb.id, 999999, user)
+                _check(False, "⑭ 不存在文档应 NotFoundError")
+            except NotFoundError:
+                print("✓ 不存在文档 → NotFoundError（404 防串库枚举）")
+            if other:
+                try:
+                    await chat_service.check_doc_access(
+                        db, temp_kb.id, online_doc.id, other
+                    )
+                    _check(False, "⑭ 他人访问私有库文档应 PermissionDeniedError")
+                except PermissionDeniedError:
+                    print("✓ 他人无读权限 → PermissionDeniedError（403）")
+            else:
+                print("⚠ 无其他用户，跳过 ⑭ 权限负例")
+
+            # SSE 协议：fake 网关零 LLM，事件序列与 multi_kb 链对齐
+            original_get_llm_14 = chat_service.get_llm
+            chat_service.get_llm = (  # type: ignore[assignment]
+                lambda *a, **k: FakeListChatModel(responses=["文档级链路OK"])
+            )
+            try:
+                doc_events = []
+                async for ev in chat_service.doc_rag_stream(
+                    temp_kb.id, online_doc.id, "海马 育儿袋"
+                ):
+                    doc_events.append(ev)
+            finally:
+                chat_service.get_llm = original_get_llm_14  # type: ignore[assignment]
+            _check(
+                doc_events[0]["type"] == "retrieval_debug" and doc_events[-1]["type"] == "done",
+                "⑭ SSE 首=retrieval_debug、尾=done（协议对齐 multi_kb）",
+            )
+            _check(
+                doc_events[0]["content"]["strategy"] == "doc_scoped",
+                "⑭ retrieval_debug.strategy=doc_scoped",
+            )
+            doc_tokens = [e for e in doc_events if e["type"] == "token"]
+            _check(
+                len(doc_tokens) > 0
+                and "".join(e["content"] for e in doc_tokens) == "文档级链路OK",
+                "⑭ token 事件来自 fake 网关（零 LLM）",
+            )
+            doc_citations = next(
+                e for e in doc_events if e["type"] == "citations"
+            )
+            _check(
+                isinstance(doc_citations["content"], list)
+                and len(doc_citations["content"]) > 0,
+                "⑭ citations 非空且仅含目标文档",
+            )
+
+            # 空候选分支：不存在文档 → 固定提示语直出，不调 LLM
+            hint_events = []
+            async for ev in chat_service.doc_rag_stream(temp_kb.id, 999999, "任意问题"):
+                hint_events.append(ev)
+            hint_tokens = [e for e in hint_events if e["type"] == "token"]
+            _check(
+                len(hint_tokens) == 1 and "未找到" in hint_tokens[0]["content"]
+                and hint_events[-1]["type"] == "done",
+                "⑭ 空候选 → 「未找到」提示直出（不进 LLM）",
+            )
+
         finally:
             await kb_service.delete_kb(db, user, temp_kb.id)
             if temp_kb2 is not None:

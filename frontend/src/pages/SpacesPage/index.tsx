@@ -22,7 +22,6 @@ import {
 } from "@ant-design/icons";
 import CategoryTree from "../../components/CategoryTree";
 import DocumentUpload from "../../components/DocumentUpload";
-import DocumentViewer from "../../components/DocumentViewer";
 import { knowledgeBaseApi, type KnowledgeBase, type UserInfo } from "../../services/api";
 import styles from "./index.module.less";
 
@@ -38,7 +37,7 @@ interface Props {
 /**
  * /spaces/:kbId 知识库管理页（P0-4 第二轮，对齐乐享）：
  * 顶栏返回 + 左侧菜单（基本信息 / 目录与文档 / 成员与权限(占位) / 回收站(占位)）。
- * 在线文档点击 → 跳回主界面打开工作台（location.state 传递）；上传文档 → 只读查看器。
+ * 文档点击统一 → 跳回主界面开 doc tab（第三轮 T7：上传文档也走 doc tab 只读，查看器仅在问答引用使用）。
  */
 export default function SpacesPage({ user }: Props) {
   const { kbId } = useParams();
@@ -50,8 +49,6 @@ export default function SpacesPage({ user }: Props) {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
-  const [viewerOpen, setViewerOpen] = useState(false);
-  const [viewerFilename, setViewerFilename] = useState("");
 
   const fetchKb = async () => {
     setLoading(true);
@@ -202,10 +199,6 @@ export default function SpacesPage({ user }: Props) {
                   refreshKey={treeRefreshKey}
                   canManage
                   onOpenDoc={(doc) => navigate("/", { state: { openDoc: doc } })}
-                  onOpenViewer={(filename) => {
-                    setViewerFilename(filename);
-                    setViewerOpen(true);
-                  }}
                   onDocChanged={bumpTree}
                 />
               </div>
@@ -216,14 +209,6 @@ export default function SpacesPage({ user }: Props) {
           )}
         </Content>
       </Layout>
-      <DocumentViewer
-        open={viewerOpen}
-        onClose={() => setViewerOpen(false)}
-        knowledgeBaseId={kb.id}
-        filename={viewerFilename}
-        snippet=""
-        page={0}
-      />
     </Layout>
   );
 }

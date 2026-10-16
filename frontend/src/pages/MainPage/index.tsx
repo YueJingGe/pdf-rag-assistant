@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Layout, Tabs, Button, Typography, message } from 'antd';
+import { Layout, Tabs, Typography } from 'antd';
 import {
-  MessageOutlined, FileOutlined, FileMarkdownOutlined,
+  MessageOutlined, FileMarkdownOutlined, FolderOutlined,
   BarChartOutlined,
 } from '@ant-design/icons';
 import KnowledgeBaseSidebar from '../../components/KnowledgeBaseSidebar';
-import DocumentUpload from '../../components/DocumentUpload';
 import ChatWindow from '../../components/ChatWindow';
 import FeedbackDashboard from '../../components/FeedbackDashboard';
 import DocumentViewer from '../../components/DocumentViewer';
 import DocumentWorkbench from '../../components/DocumentWorkbench';
+import CategoryView from '../../components/CategoryView';
 import type { CitationClickInfo } from '../../components/CitationView';
 import type { OpenableDoc } from '../../components/CategoryTree';
 import { knowledgeBaseApi, type KnowledgeBase, type UserInfo } from '../../services/api';
@@ -19,6 +19,8 @@ const { Sider, Content, Header } = Layout;
 
 // P0-4：文档工作台 tab key（key 与 docId 绑定，tab 可关闭）
 const docTabKey = (docId: number) => `doc-${docId}`;
+// P0-4 第三轮：目录视图 tab key
+const catTabKey = (categoryId: number) => `dir-${categoryId}`;
 
 interface Props {
   user: UserInfo;
@@ -40,6 +42,8 @@ export default function MainPage({ user, onLogout }: Props) {
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const [openDocs, setOpenDocs] = useState<OpenableDoc[]>([]); // P0-4：已打开的文档工作台 tabs
+  // P0-4 第三轮：已打开的目录视图 tabs（点击目录树目录 → 打开目录视图，替代文档管理 tab）
+  const [openCategories, setOpenCategories] = useState<{ id: number; name: string }[]>([]);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerCitation, setViewerCitation] = useState<CitationClickInfo>({ filename: '', page: 0, snippet: '' });
 
@@ -92,10 +96,11 @@ export default function MainPage({ user, onLogout }: Props) {
 
   const isPlainChat = !selectedKB;
 
-  // P0-4：切换知识库 → 清空已打开的文档工作台 tabs，回到问答页
+  // P0-4：切换知识库 → 清空已打开的文档工作台/目录视图 tabs，回到问答页
   const handleSelectKB = (kb: KnowledgeBase | null) => {
     setSelectedKB(kb);
     setOpenDocs([]);
+    setOpenCategories([]);
     setActiveTab('chat');
   };
 
@@ -121,6 +126,30 @@ export default function MainPage({ user, onLogout }: Props) {
       }
       return next;
     });
+  };
+
+  // P0-4 第三轮：目录视图 tab 打开/关闭/改名（同文档 tab 交互）
+  const openCategory = (categoryId: number, name: string) => {
+    setOpenCategories((prev) =>
+      prev.some((c) => c.id === categoryId) ? prev : [...prev, { id: categoryId, name }]
+    );
+    setActiveTab(catTabKey(categoryId));
+  };
+
+  const closeCategory = (key: string) => {
+    setOpenCategories((prev) => {
+      const next = prev.filter((c) => catTabKey(c.id) !== key);
+      if (activeTab === key) {
+        setActiveTab(next.length > 0 ? catTabKey(next[next.length - 1].id) : 'chat');
+      }
+      return next;
+    });
+  };
+
+  const renameCategoryTab = (categoryId: number, newName: string) => {
+    setOpenCategories((prev) =>
+      prev.map((c) => (c.id === categoryId ? { ...c, name: newName } : c))
+    );
   };
 
   // P0-4 第二轮：管理页（/spaces）点击在线文档 → location.state 携带 openDoc 跳回主界面打开工作台
@@ -149,15 +178,6 @@ export default function MainPage({ user, onLogout }: Props) {
         </div>
       ),
     },
-    ...(canManageDocs && !isPlainChat ? [{
-      key: 'docs',
-      label: <span><FileOutlined /> 文档管理</span>,
-      children: (
-        <div style={{ height: 'calc(100vh - 112px)', overflow: 'hidden' }}>
-          <DocumentUpload knowledgeBaseId={selectedKB?.id ?? null} onDocChange={handleDocChanged} />
-        </div>
-      ),
-    }] : []),
     ...(user?.is_admin && !isPlainChat ? [{
       key: 'feedback',
       label: <span><BarChartOutlined /> 检索调优</span>,
@@ -167,6 +187,27 @@ export default function MainPage({ user, onLogout }: Props) {
         </div>
       ),
     }] : []),
+    // P0-4 第三轮：动态目录视图 tabs（乐享文件夹页：inline 改名 + 新建/上传 + 子目录/文档列表）
+    ...openCategories.map((cat) => ({
+      key: catTabKey(cat.id),
+      label: <span><FolderOutlined /> {cat.name}</span>,
+      closable: true,
+      children: (
+        <div style={{ height: 'calc(100vh - 112px)', overflow: 'hidden' }}>
+          <CategoryView
+            kbId={selectedKB!.id}
+            categoryId={cat.id}
+            name={cat.name}
+            canManage={canManageDocs}
+            onChanged={handleDocChanged}
+            onOpenDoc={openDoc}
+            onOpenCategory={openCategory}
+            onRenamed={renameCategoryTab}
+            onMissing={() => closeCategory(catTabKey(cat.id))}
+          />
+        </div>
+      ),
+    })),
     // P0-4：动态文档工作台 tabs（在线文档可编辑，上传文档只读渲染）
     ...openDocs.map((doc) => ({
       key: docTabKey(doc.id),
@@ -181,6 +222,7 @@ export default function MainPage({ user, onLogout }: Props) {
             source={doc.source}
             categoryName={doc.categoryName}
             onSaved={handleDocChanged}
+            onCitationClick={handleCitationClick}
           />
         </div>
       ),
@@ -201,16 +243,12 @@ export default function MainPage({ user, onLogout }: Props) {
             user={user}
             onLogout={handleLogout}
             canManage={canManageDocs}
-            onGoUpload={() => setActiveTab('docs')}
             onGoChat={() => setActiveTab('chat')}
             chatActive={activeTab === 'chat'}
             treeRefreshKey={treeRefreshKey}
             onDocChanged={handleDocChanged}
             onOpenDoc={openDoc}
-            onOpenViewer={(filename) => {
-              setViewerCitation({ filename, page: 0, snippet: '' });
-              setViewerOpen(true);
-            }}
+            onOpenCategory={openCategory}
           />
         </Sider>
         <Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -220,7 +258,11 @@ export default function MainPage({ user, onLogout }: Props) {
             type="editable-card"
             hideAdd
             onEdit={(targetKey, action) => {
-              if (action === 'remove') closeDoc(String(targetKey));
+              if (action === 'remove') {
+                const key = String(targetKey);
+                if (key.startsWith('dir-')) closeCategory(key);
+                else closeDoc(key);
+              }
             }}
             centered
             style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}

@@ -1,6 +1,79 @@
 # P0-4 乐享式知识库最小 demo — changelog
 
-> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）
+> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8；v1.2 增补第三轮 §9）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）/ `0b76011`（第三轮）
+
+## 第三轮：文件管理收拢 + 文档 tab 内嵌问AI（2026-10-15）
+
+按需求 §9（v1.2）实施：基线 commit `0b76011` → T1 树操作入口修复 → T2 目录行「+」菜单承载新建/上传 → T3 目录视图 tab → T4/T5 菜单精简+批量删除 → T6 历史常驻侧栏 → T7 文档 tab 两栏+DocChatPanel → T8 后端文档级问答流 → 冒烟⑭。**RAG 禁区五文件 diff 为空（git diff 复查），文档级检索落在 service 层后过滤，全程零新增 LLM 调用（生成走 P0-3b 网关）。**
+
+### 改动文件清单
+
+**前端（交互重构）**
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/KnowledgeBaseSidebar/` | 重写：删顶部「+新建/⬆上传」双按钮与新建 Modal/UploadModal 引用；问AI 导航下方新增**历史对话列表**（常驻，点击切换会话、悬停 Popconfirm 删除）；CustomEvent 四事件总线：p04:conv-switch（→聊天窗切换）/p04:conv-active（←聊天窗高亮）/p04:conv-list-changed（←刷新列表）/p04:conv-deleted（→删除的正是当前会话时清空消息） |
+| `frontend/src/components/CategoryTree/` | 上传自足：headerPlusMenu 增「上传文件」项 + hidden input + UploadModal（挂根目录）；batchDelete 改 documentApi.batchDelete 真批量；文档点击统一 onOpenDoc |
+| `frontend/src/components/CategoryView/` | 新建（441 行 + less）：目录视图 tab——头部 inline 改名、「+新建」菜单（在线文档/子目录）、「⬆上传」（挂当前目录）；子目录行（点击进入 + 文档计数 + rowMenu）+ 文档行（status Tag + docRowMenu 仅重命名/删除）+ 空态「该文件夹暂无内容」；onMissing 目录被删自动关 tab |
+| `frontend/src/pages/MainPage/` | 移除「文档管理」tab 与 DocumentUpload 引用；新增目录 tabs（key=`dir-{id}`，去重打开/关闭分流/改名联动）；Sidebar 传参删 onGoUpload 加 onOpenCategory；Workbench 加 onCitationClick |
+| `frontend/src/components/ChatWindow/` | 移除历史浮层（Dropdown/Popconfirm/MenuProps/conversations state/loadConversations/deleteConversation 全删）；改为双向事件联动：广播 conv-active + conv-list-changed，监听 conv-switch/conv-deleted |
+| `frontend/src/components/DocumentWorkbench/` | 两栏化：左正文（在线 MDEditor 可编辑/上传只读）+ 右 DocChatPanel（360px，可收起）；引用点击经 onCitationClick 打开查看器 |
+| `frontend/src/components/DocChatPanel/` | 新建（197 行 + less）：信息源 Segmented（当前文档/全部知识）+ 独立 useSSE 流式 + 消息列表/输入行 + CitationView 引用点击；scope=doc 时 send 传 documentId（不传 conversationId=轻流式不落会话）；docId/scope 变化清空会话 |
+| `frontend/src/hooks/useSSE.ts` | SendOptions 增 `documentId`（入 body.document_id） |
+| `frontend/src/pages/SpacesPage/` | 删 DocumentViewer 引用；文档点击统一 onOpenDoc 跳回主界面开 doc tab |
+| `frontend/src/components/UploadModal/` | 修复 UploadingItem.status 三元推断类型标注（TS2345） |
+
+**后端（T8 文档级问答流）**
+
+| 文件 | 改动 |
+|---|---|
+| `backend/app/api/chat.py` | ChatRequest 增 `document_id`；chat_stream 前置文档级分支（check_doc_access → EventSourceResponse(_doc_sse_events)，**不落会话**）；新增 _doc_sse_events 生成器（retrieval_debug/token/citations/done 转发） |
+| `backend/app/services/chat_service.py` | 新增三函数：check_doc_access（viewer 校验 + db.get(Document) 归属校验，串库 404 防枚举）/ doc_retrieve（retrieve_with_strategy 全库候选 → metadata.document_id 后过滤 → 截断 retrieval_top_k）/ doc_rag_stream（strategy="doc_scoped"；空候选 yield 固定提示语不进 LLM；citations/done 在流内 yield） |
+
+**脚本与文档**
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/smoke_test_p04.py` | 追加 ⑭ 场景（11 断言）：干扰文档零泄漏 / doc_retrieve 全命中目标文档 / 跨文档隔离 / 截断 ≤top_k / 不存在 doc 空候选 / 404 / 403 / SSE 首尾 + strategy=doc_scoped / fake token / citations 非空 / 空候选提示直出 |
+| `docs/requirements/P0-4-lexiang-style-kb.md` | §9.3 验收表同步 v1.2 措辞（10 条） |
+
+### 关键设计摘要
+
+- **文档级检索零禁区触碰**：chunk metadata 早已携带 document_id（入库时写入），service 层对 retrieve_with_strategy 的候选做后过滤即可；「候选量 = 策略默认返回（top_k=4 全库最优集）」是对禁区函数签名的忠实落地——需求 §9「top_k×3」的写法与实际 API 有出入，已在 §9 注明；如长文档多点命中出现候选稀疏漏检，需禁区支持 top_k 参数后放宽（P1）
+- **事件总线选型**：侧栏/聊天窗为兄弟组件，引入状态管理成本高于收益，选 window CustomEvent 四事件轻量总线，命名统一 `p04:` 前缀防冲突
+- **「文档面板本质就是问AI」**（用户原话定调）：DocChatPanel 与 ChatWindow 同一 useSSE、同一后端 /chat/stream，差异仅 scope=doc 时多传 document_id；不落会话（轻流式），docId/scope 变化即清空会话
+- **上传文档统一 doc tab**：Workbench 本就支持只读渲染，树上/目录视图文档点击一律 onOpenDoc；onOpenViewer 从调用链全链路退役（DocumentViewer 保留给问答引用点击专用）
+- **目录行「+」菜单承载新建/上传**（v1.2 修订核心）：侧栏双按钮取消，新建/上传收进「目录」标题行 hover「+」菜单；CategoryTree 内嵌 UploadModal 自足（挂根目录）
+
+### 验收结果（需求 §9.3 对照）
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | 树节点「···」操作入口（hover 可达） | ✅ opacity+pointer-events 方案；浏览器 a11y 快照中「+」/「···」按钮均出现 |
+| 2 | 侧栏无双按钮、目录行「+」菜单承载新建/上传 | ✅ 快照证实无双按钮；tsc 零错误 |
+| 3 | 目录视图 tab（CategoryView） | ✅ tsc 零错误；目录点击开 tab / inline 改名 / 空态 / onMissing 关 tab |
+| 4 | 「文档管理」tab 移除 | ✅ 快照：主区域仅「问AI」+ 动态 tabs |
+| 5 | 菜单精简 + 多选批量删除 | ✅ 文档菜单仅 重命名/删除；CategoryTree/CategoryView 双入口走批量 API |
+| 6 | 历史对话常驻侧栏 | ✅ 快照：18 条历史项 + delete icon 常驻；聊天窗无「历史」按钮、保留「+ 新对话」 |
+| 7 | 文档 tab 两栏 + DocChatPanel | ✅ tsc 零错误；信息源两档（当前文档/全部知识）切换 |
+| 8 | 文档级问答流（后端） | ✅ 冒烟⑭ 11 断言全绿（隔离/截断/404/403/SSE 协议/空候选直出） |
+| 9 | 质量门 | ✅ tsc -b 零错误 / py_compile 全过 / 禁区五文件 git diff 为空 / 后端重启 OpenAPI 确认 document_id 进 schema |
+| 10 | 集成面 | ✅ 冒烟全量 46 断言绿（原 35 + 新 11）；浏览器快照交互形态全部落地 |
+
+### 遇到的问题
+
+1. **chat_service SearchReplace 错位（最严重，git diff 抓出）**：为追加 doc_* 三函数做的尾部替换，误把 multi_kb_rag_stream 尾部 `yield citations/done` 裹进新函数形成重复；修复该「重复」时又把原函数的两行 yield 一并删掉，多库链 citations 断言将 StopIteration。以 `git show HEAD` 考古原结构归还两行 yield，最终 `git diff | grep "^-"` 为空验证纯新增。教训与第二轮一致：**批量替换后必以 git diff 为准，不信任工具「成功」文案**。
+2. **uvicorn --reload 未生效**：chat.py 改动后 curl openapi 仍无 document_id——dev reload 对本轮改动未触发；kill 旧进程手动重启后确认 `document_id: True`。
+3. **ChatWindow 删 state 后引用残留**：conversations/loadConversations 删除后，JSX 内历史 Dropdown 块与 setConversations 调用残留，tsc 三处报错；二轮补删（连带删除已无引用的 deleteConversation 与相关 import）。
+4. **GetProblems 快照误报**：SearchReplace 成功后 Problems 面板仍报 MainPage/SpacesPage 旧错；以 `npx tsc -b` 实测为准（零错误）。
+
+### 遗留事项（P1）
+
+- **文档级检索候选稀疏风险**：候选量受 retrieve_with_strategy 默认 top_k=4 限制，长文档多点命中时可能漏检；禁区函数支持 top_k 参数后可放宽
+- hover「···」/「+」菜单的**真实点击行为**（弹出/防抖）需用户浏览器配合实测，快照仅证明元素可达
+- DocumentUpload 组件仍被 /spaces 管理页使用（需求 §9.5 风险条款：仅移除主界面 docs tab），全面退役留后续
+- 事件总线为 window CustomEvent 轻量方案，组件层级再复杂化时可考虑收敛为状态管理
+- 文档 tab 内 DocChatPanel 不落会话（轻流式），历史留痕需求出现时再议
 
 ## 第二轮：交互对齐乐享（2026-10-15）
 

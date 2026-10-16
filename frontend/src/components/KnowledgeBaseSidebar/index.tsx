@@ -11,6 +11,7 @@ import {
   Avatar,
   Tooltip,
   Divider,
+  Popconfirm,
   message,
 } from "antd";
 import {
@@ -22,23 +23,19 @@ import {
   MessageOutlined,
   CompassOutlined,
   HomeOutlined,
-  UploadOutlined,
   SettingOutlined,
   ToolOutlined,
+  HistoryOutlined,
 } from "@ant-design/icons";
 import CategoryTree, { type OpenableDoc } from "../CategoryTree";
-import { knowledgeBaseApi, type KnowledgeBase, type UserInfo } from "../../services/api";
+import {
+  knowledgeBaseApi,
+  chatApi,
+  type KnowledgeBase,
+  type UserInfo,
+  type ConversationInfo,
+} from "../../services/api";
 import styles from "./index.module.less";
-
-const NONE_KB: KnowledgeBase = {
-  id: 0,
-  name: "普通聊天",
-  description: "不选择知识库",
-  permission: "private",
-  document_count: 0,
-  created_at: "",
-  updated_at: "",
-};
 
 interface Props {
   selectedId: number | null;
@@ -47,22 +44,25 @@ interface Props {
   user: UserInfo;
   onLogout: () => void;
   canManage: boolean;
-  /** 上传按钮 → App 切到文档管理 tab */
-  onGoUpload: () => void;
-  /** 导航「问AI」→ App 切回问答 tab */
+  /** 导航「问AI」→ 主区域切回问答 tab */
   onGoChat: () => void;
   chatActive: boolean;
   treeRefreshKey?: number;
   onDocChanged?: () => void;
   onOpenDoc: (doc: OpenableDoc) => void;
-  onOpenViewer: (filename: string) => void;
+  /** P0-4 第三轮：目录树点击目录 → 主区域打开目录视图 tab */
+  onOpenCategory?: (categoryId: number, name: string) => void;
 }
 
 /**
- * P0-4 乐享式左侧导航：
- * 顶部库切换器（原 KB 列表收拢为 Select）+ 新建/管理 → 上传按钮 →
- * 导航项（问AI / 知识地图(P1 占位) / 主页(P1 占位)）→ 目录树 → 底部用户卡。
- * 知识库新建/重命名/删除逻辑保留（P0 前既有能力）。
+ * P0-4 乐享式左侧导航（v1.2 修订）：
+ * 库切换器 → 导航（问AI / 知识地图(P1) / 主页(P1)）→ 历史对话列表（常驻侧栏，随选中库拉取）→
+ * 目录树（新建/上传收拢到目录树「目录」行与节点「···」菜单内，本组件不再承载）→ 底部用户卡。
+ * 跨组件联动走轻量 CustomEvent 总线：
+ * - p04:conv-switch   侧栏 → 聊天窗：切换会话
+ * - p04:conv-active   聊天窗 → 侧栏：当前活跃会话高亮
+ * - p04:conv-list-changed 聊天窗 → 侧栏：会话列表变化（新建/首条消息落库）需刷新
+ * - p04:conv-deleted  侧栏 → 聊天窗：删除的正是当前打开的会话，聊天窗清空
  */
 export default function KnowledgeBaseSidebar({
   selectedId,
@@ -71,13 +71,12 @@ export default function KnowledgeBaseSidebar({
   user,
   onLogout,
   canManage,
-  onGoUpload,
   onGoChat,
   chatActive,
   treeRefreshKey,
   onDocChanged,
   onOpenDoc,
-  onOpenViewer,
+  onOpenCategory,
 }: Props) {
   const navigate = useNavigate();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
@@ -87,6 +86,10 @@ export default function KnowledgeBaseSidebar({
   const [renamingKb, setRenamingKb] = useState<KnowledgeBase | null>(null);
   const [form] = Form.useForm();
   const [renameForm] = Form.useForm();
+
+  // P0-4 v1.2：历史对话列表（常驻侧栏，随选中库拉取；普通聊天用 kb_id=0）
+  const [conversations, setConversations] = useState<ConversationInfo[]>([]);
+  const [activeConvId, setActiveConvId] = useState<number | null>(null);
 
   const fetchList = async () => {
     setLoading(true);
@@ -98,9 +101,37 @@ export default function KnowledgeBaseSidebar({
     }
   };
 
+  const fetchConversations = async () => {
+    try {
+      const { data } = await chatApi.listConversations(selectedId ?? 0);
+      setConversations(data);
+    } catch {
+      /* ignore */
+    }
+  };
+
   useEffect(() => {
     fetchList();
   }, [refreshKey]);
+
+  useEffect(() => {
+    fetchConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  // 监听聊天窗广播：活跃会话高亮 + 列表变化刷新
+  useEffect(() => {
+    const onActive = (e: Event) =>
+      setActiveConvId((e as CustomEvent<number | null>).detail ?? null);
+    const onListChanged = () => fetchConversations();
+    window.addEventListener("p04:conv-active", onActive);
+    window.addEventListener("p04:conv-list-changed", onListChanged);
+    return () => {
+      window.removeEventListener("p04:conv-active", onActive);
+      window.removeEventListener("p04:conv-list-changed", onListChanged);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   const current = knowledgeBases.find((kb) => kb.id === selectedId) ?? null;
 
@@ -134,6 +165,20 @@ export default function KnowledgeBaseSidebar({
     setRenamingKb(kb);
     renameForm.setFieldsValue({ name: kb.name });
     setRenameModalOpen(true);
+  };
+
+  // ---- 历史对话联动 ----
+  const handleSwitchConv = (convId: number) => {
+    window.dispatchEvent(new CustomEvent("p04:conv-switch", { detail: convId }));
+    onGoChat();
+  };
+
+  const handleDeleteConv = async (convId: number) => {
+    await chatApi.deleteConversation(convId);
+    message.success("对话已删除");
+    // 删除的可能正是聊天窗当前打开的会话 → 通知其清空
+    window.dispatchEvent(new CustomEvent("p04:conv-deleted", { detail: convId }));
+    fetchConversations();
   };
 
   return (
@@ -190,21 +235,6 @@ export default function KnowledgeBaseSidebar({
         )}
       </div>
 
-      {/* 操作：上传文档（需选中知识库） */}
-      <div className={styles.actions}>
-        <Button
-          block
-          size="small"
-          type="primary"
-          ghost
-          icon={<UploadOutlined />}
-          disabled={!selectedId}
-          onClick={onGoUpload}
-        >
-          上传文档
-        </Button>
-      </div>
-
       {/* 导航项 */}
       <div className={styles.nav}>
         <div
@@ -225,6 +255,46 @@ export default function KnowledgeBaseSidebar({
         </Tooltip>
       </div>
 
+      {/* P0-4 v1.2：历史对话列表（常驻侧栏；点击切换会话，hover 删除） */}
+      <div className={styles.historyBlock}>
+        <div className={styles.historyTitle}>
+          <HistoryOutlined /> 历史对话
+        </div>
+        {conversations.length === 0 ? (
+          <Typography.Text type="secondary" className={styles.historyEmpty}>
+            暂无历史对话
+          </Typography.Text>
+        ) : (
+          conversations.map((conv) => (
+            <div
+              key={conv.id}
+              className={`${styles.historyItem} ${
+                conv.id === activeConvId ? styles.historyItemActive : ""
+              }`}
+              onClick={() => handleSwitchConv(conv.id)}
+            >
+              <MessageOutlined className={styles.historyIcon} />
+              <span className={styles.historyName} title={conv.title}>
+                {conv.title}
+              </span>
+              <Popconfirm
+                title="删除此对话？"
+                onConfirm={(e) => {
+                  e?.stopPropagation();
+                  handleDeleteConv(conv.id);
+                }}
+                onPopupClick={(e) => e.stopPropagation()}
+              >
+                <DeleteOutlined
+                  className={styles.historyDelete}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </Popconfirm>
+            </div>
+          ))
+        )}
+      </div>
+
       <Divider style={{ margin: "8px 0" }} />
 
       {/* 目录树（普通聊天无目录） */}
@@ -235,7 +305,7 @@ export default function KnowledgeBaseSidebar({
             refreshKey={treeRefreshKey}
             canManage={canManage}
             onOpenDoc={onOpenDoc}
-            onOpenViewer={onOpenViewer}
+            onOpenCategory={onOpenCategory}
             onDocChanged={onDocChanged}
           />
         ) : (

@@ -11,8 +11,6 @@ import {
   Space,
   Card,
   Select,
-  Dropdown,
-  Popconfirm,
   Modal,
   TreeSelect,
   Popover,
@@ -29,8 +27,6 @@ import {
   ExperimentOutlined,
   BulbOutlined,
   PlusOutlined,
-  HistoryOutlined,
-  DeleteOutlined,
   PictureOutlined,
   FileOutlined,
   CloseCircleFilled,
@@ -40,7 +36,6 @@ import {
   GlobalOutlined,
   SaveOutlined,
 } from "@ant-design/icons";
-import type { MenuProps } from "antd";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useSSE } from "../../hooks/useSSE";
@@ -53,7 +48,6 @@ import {
   knowledgeBaseApi,
   type Citation,
   type RetrievalDebug,
-  type ConversationInfo,
   type ToolTraceItem,
   type KnowledgeBase,
   type TreeData,
@@ -125,7 +119,6 @@ export default function ChatWindow({
   const [composeOpen, setComposeOpen] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [conversations, setConversations] = useState<ConversationInfo[]>([]);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -145,15 +138,6 @@ export default function ChatWindow({
 
   const effectiveKbId = knowledgeBaseId ?? 0; // 普通聊天用 0 作为 kb_id
 
-  const loadConversations = async () => {
-    try {
-      const { data } = await chatApi.listConversations(effectiveKbId);
-      setConversations(data);
-    } catch {
-      /* ignore */
-    }
-  };
-
   // P0-4 第二轮：信息源面板数据（打开弹层时懒加载，避免冗余请求）
   const loadAllKbs = async () => {
     try {
@@ -164,6 +148,7 @@ export default function ChatWindow({
     }
   };
 
+  // P0-4 v1.2：会话切换改为由侧栏历史列表触发（p04:conv-switch 事件），本组件不再维护历史下拉
   const switchConversation = async (convId: number) => {
     try {
       const { data: msgs } = await chatApi.getMessages(convId);
@@ -181,15 +166,34 @@ export default function ChatWindow({
     }
   };
 
-  const deleteConversation = async (convId: number) => {
-    await chatApi.deleteConversation(convId);
-    message.success("对话已删除");
-    if (sse.conversationId === convId) {
-      setMessages([]);
-      sse.setConversationId(null);
-    }
-    loadConversations();
-  };
+  // P0-4 v1.2：会话状态变化广播给侧栏历史列表（活跃高亮 + 列表刷新：新会话落库等场景）；
+  // 删除会话入口已移至侧栏历史列表（删除当前会话时经 p04:conv-deleted 通知本组件清空）
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("p04:conv-active", { detail: sse.conversationId })
+    );
+    window.dispatchEvent(new CustomEvent("p04:conv-list-changed"));
+  }, [sse.conversationId]);
+
+  // P0-4 v1.2：监听侧栏历史列表联动（切换会话 / 删除的正是当前打开的会话）
+  useEffect(() => {
+    const onSwitch = (e: Event) =>
+      switchConversation((e as CustomEvent<number>).detail);
+    const onDeleted = (e: Event) => {
+      const convId = (e as CustomEvent<number>).detail;
+      if (sse.conversationId === convId) {
+        setMessages([]);
+        sse.setConversationId(null);
+      }
+    };
+    window.addEventListener("p04:conv-switch", onSwitch);
+    window.addEventListener("p04:conv-deleted", onDeleted);
+    return () => {
+      window.removeEventListener("p04:conv-switch", onSwitch);
+      window.removeEventListener("p04:conv-deleted", onDeleted);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sse.conversationId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -206,7 +210,6 @@ export default function ChatWindow({
 
   useEffect(() => {
     setMessages([]);
-    setConversations([]);
     // P0-4 第二轮：切换页签库时信息源重置为当前库（普通聊天页签则清空）
     setSourceKbIds(knowledgeBaseId ? [knowledgeBaseId] : []);
 
@@ -214,7 +217,6 @@ export default function ChatWindow({
       setHistoryLoading(true);
       try {
         const { data: convs } = await chatApi.listConversations(effectiveKbId);
-        setConversations(convs);
 
         // Try to restore the last conversation for this KB
         const savedConvId = localStorage.getItem(`conv_${effectiveKbId}`);
@@ -464,64 +466,6 @@ export default function ChatWindow({
               新对话
             </Button>
           </Tooltip>
-          <Dropdown
-            trigger={["click"]}
-            onOpenChange={(open) => {
-              if (open) loadConversations();
-            }}
-            menu={{
-              items:
-                conversations.length === 0
-                  ? [{ key: "empty", label: "暂无历史对话", disabled: true }]
-                  : (conversations.map((conv) => ({
-                      key: conv.id,
-                      label: (
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            minWidth: 180,
-                          }}
-                        >
-                          <span
-                            style={{
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              maxWidth: 150,
-                              fontWeight:
-                                conv.id === sse.conversationId ? 600 : 400,
-                            }}
-                          >
-                            {conv.title}
-                          </span>
-                          <Popconfirm
-                            title="删除此对话？"
-                            onConfirm={(e) => {
-                              e?.stopPropagation();
-                              deleteConversation(conv.id);
-                            }}
-                          >
-                            <DeleteOutlined
-                              style={{ color: "#ff4d4f", marginLeft: 8 }}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          </Popconfirm>
-                        </div>
-                      ),
-                    })) as MenuProps["items"]),
-              onClick: ({ key }) => {
-                if (key !== "empty") switchConversation(Number(key));
-              },
-            }}
-          >
-            <Tooltip title="历史对话">
-              <Button icon={<HistoryOutlined />} size="small">
-                历史
-              </Button>
-            </Tooltip>
-          </Dropdown>
           {!isPlainChat && (
             <Tooltip title={isMultiKb ? "多信息源模式不支持 HyDE" : "HyDE 假想文档检索（实验性，双倍Token）"}>
               <Switch

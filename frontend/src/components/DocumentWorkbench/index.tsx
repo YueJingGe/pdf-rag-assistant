@@ -4,11 +4,14 @@ import {
   SaveOutlined,
   FileMarkdownOutlined,
   FileTextOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import MDEditor from "@uiw/react-md-editor";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { documentApi } from "../../services/api";
+import DocChatPanel from "../DocChatPanel";
+import type { CitationClickInfo } from "../CitationView";
 import styles from "./index.module.less";
 
 interface Props {
@@ -18,12 +21,14 @@ interface Props {
   source: string;
   categoryName?: string;
   onSaved?: () => void;
+  /** P0-4 第三轮（T7）：右侧问AI 面板引用点击 → 外层打开文档查看器 */
+  onCitationClick?: (info: CitationClickInfo) => void;
 }
 
 /**
- * P0-4 文档工作台：
- * - 在线文档：MDEditor 编辑 + 手动保存（保存 = 覆盖 content 真相源 + 后端重建索引）
- * - 上传文档：只读渲染（同源 getContent，与引用查看器数据一致）
+ * P0-4 文档工作台（第三轮 T7 两栏化）：
+ * - 左栏正文：在线文档 MDEditor 编辑 + 手动保存（保存 = 覆盖 content 真相源 + 后端重建索引）；上传文档只读渲染
+ * - 右栏 DocChatPanel：信息源默认当前文档（可切全部知识），本质就是问AI，可收起
  */
 export default function DocumentWorkbench({
   kbId,
@@ -32,11 +37,14 @@ export default function DocumentWorkbench({
   source,
   categoryName,
   onSaved,
+  onCitationClick,
 }: Props) {
   const [content, setContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // P0-4 第三轮（T7）：右侧问AI 面板收起态（默认展开）
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const isOnline = source === "online";
   const dirty = isOnline && content !== savedContent;
 
@@ -112,30 +120,51 @@ export default function DocumentWorkbench({
             保存
           </Button>
         )}
+        <Button
+          type={chatCollapsed ? "default" : "primary"}
+          size="small"
+          icon={<RobotOutlined />}
+          onClick={() => setChatCollapsed(!chatCollapsed)}
+        >
+          {chatCollapsed ? "展开问AI" : "收起问AI"}
+        </Button>
       </div>
       <div className={styles.body}>
-        {loading ? (
-          <div className={styles.center}>
-            <Spin />
-          </div>
-        ) : isOnline ? (
-          <div data-color-mode="light" className={styles.editorWrap}>
-            <MDEditor
-              value={content}
-              onChange={(v) => setContent(v ?? "")}
-              preview="edit"
-              visibleDragbar={false}
-              height="100%"
-            />
-          </div>
-        ) : (
-          <div className={styles.readonly}>
-            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
-              上传文档为只读模式；如需修改请下载后重新上传。
-            </Typography.Text>
-            <div className={styles.markdownContent}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        <div className={styles.contentPane}>
+          {loading ? (
+            <div className={styles.center}>
+              <Spin />
             </div>
+          ) : isOnline ? (
+            <div data-color-mode="light" className={styles.editorWrap}>
+              <MDEditor
+                value={content}
+                onChange={(v) => setContent(v ?? "")}
+                preview="edit"
+                visibleDragbar={false}
+                height="100%"
+              />
+            </div>
+          ) : (
+            <div className={styles.readonly}>
+              <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+                上传文档为只读模式；如需修改请下载后重新上传。
+              </Typography.Text>
+              <div className={styles.markdownContent}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+              </div>
+            </div>
+          )}
+        </div>
+        {/* P0-4 第三轮（T7）：右侧问AI 面板（信息源默认当前文档，可切全部知识） */}
+        {!chatCollapsed && (
+          <div className={styles.chatPane}>
+            <DocChatPanel
+              kbId={kbId}
+              docId={docId}
+              docName={filename}
+              onCitationClick={onCitationClick}
+            />
           </div>
         )}
       </div>

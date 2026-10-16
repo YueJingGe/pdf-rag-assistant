@@ -24,6 +24,8 @@ class ChatRequest(BaseModel):
     knowledge_base_id: int | None = None
     # P0-4 第二轮：多库信息源（len>1 时走 service 层多库合并链；单元素/空忽略，向后兼容）
     knowledge_base_ids: list[int] | None = None
+    # P0-4 第三轮（T8）：文档级问答（与 knowledge_base_id 同传时切文档级轻流式，不落会话）
+    document_id: int | None = None
     question: str
     conversation_id: int | None = None
     use_hyde: bool = False
@@ -57,6 +59,14 @@ async def chat_stream(
     # 多库：SSE 流开始前逐库读权限校验（越权 403，不进事件流）
     if is_multi_kb:
         await chat_service.check_multi_kb_access(db, multi_kb_ids, current_user)
+
+    # P0-4 第三轮（T8）：文档级问答（kb_id + document_id 同传）→ 轻流式，不落会话/消息；
+    # kb 读权限（403）与文档归属（404 防串库枚举）编排在 chat_service
+    if req.document_id is not None and primary_kb_id:
+        await chat_service.check_doc_access(db, primary_kb_id, req.document_id, current_user)
+        return EventSourceResponse(
+            _doc_sse_events(primary_kb_id, req.document_id, req.question)
+        )
 
     # 权限校验、会话获取/创建、历史加载、用户消息持久化下沉 chat_service（D3：SSE 事件组装留路由层）
     # 多库时会话挂主信息源（第一个选中库）
@@ -132,6 +142,23 @@ async def _chat_sse_events(
                 yield {"event": "done", "data": json.dumps({"content": full_answer})}
 
     await chat_service.save_assistant_message(db, conversation.id, full_answer, citations)
+
+
+async def _doc_sse_events(kb_id: int, document_id: int, question: str):
+    """文档级问答 SSE 生成器（P0-4 第三轮 T8）：轻流式不落会话。
+
+    chunk 协议与 multi_kb_rag_stream 一致（retrieval_debug / token / citations / done），
+    生成/检索编排在 chat_service.doc_rag_stream（service 层后过滤，禁区零触碰）。
+    """
+    async for chunk in chat_service.doc_rag_stream(kb_id, document_id, question):
+        if chunk["type"] == "token":
+            yield {"event": "token", "data": json.dumps({"content": chunk["content"]})}
+        elif chunk["type"] == "citations":
+            yield {"event": "citations", "data": json.dumps({"citations": chunk["content"]})}
+        elif chunk["type"] == "retrieval_debug":
+            yield {"event": "retrieval_debug", "data": json.dumps(chunk["content"])}
+        elif chunk["type"] == "done":
+            yield {"event": "done", "data": json.dumps({"content": chunk["content"]})}
 
 
 @router.post("/agent/stream")

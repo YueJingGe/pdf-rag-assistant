@@ -14,10 +14,25 @@
   flex-shrink: 0;
 }
 
+/* P0-4 第三轮（T7）：两栏——左正文 + 右问AI 面板 */
 .body {
   flex: 1;
   min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.contentPane {
+  flex: 1;
+  min-width: 0;
   overflow: auto;
+}
+
+.chatPane {
+  width: 360px;
+  flex-shrink: 0;
+  border-left: 1px solid #f0f0f0;
+  overflow: hidden;
 }
 
 .center {

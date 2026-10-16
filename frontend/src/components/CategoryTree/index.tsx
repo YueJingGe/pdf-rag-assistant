@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Tree,
   Dropdown,
   Modal,
   Form,
   Input,
-  TreeSelect,
-  Popconfirm,
+  Checkbox,
+  Button,
+  Tooltip,
   message,
   Empty,
   Spin,
@@ -18,8 +19,11 @@ import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
-  DragOutlined,
   FileAddOutlined,
+  AppstoreOutlined,
+  EllipsisOutlined,
+  CloseOutlined,
+  UploadOutlined,
 } from "@ant-design/icons";
 import type { DataNode } from "antd/es/tree";
 import {
@@ -29,6 +33,7 @@ import {
   type CategoryInfo,
   type TreeNodeDocument,
 } from "../../services/api";
+import UploadModal from "../UploadModal";
 import styles from "./index.module.less";
 
 /** 可在文档工作台打开的文档（在线文档） */
@@ -71,36 +76,47 @@ interface Props {
   kbId: number;
   refreshKey?: number;
   canManage: boolean;
-  /** 点击在线文档 → 打开工作台 tab */
+  /** 点击文档 → 打开工作台 tab（在线可编辑/上传只读，P0-4 第三轮统一 doc tab） */
   onOpenDoc: (doc: OpenableDoc) => void;
-  /** 点击上传文档 → 复用 DocumentViewer 只读查看 */
-  onOpenViewer: (filename: string) => void;
+  /** P0-4 第三轮：点击目录 → 主区域打开目录视图 tab */
+  onOpenCategory?: (categoryId: number, name: string) => void;
   onDocChanged?: () => void;
+  /** 顶部「目录」标题行（主界面乐享式；/spaces 管理页自带标题，传 false 关闭） */
+  showHeader?: boolean;
 }
 
-type ModalMode = "newDoc" | "newCat" | "renameCat" | "renameDoc" | "moveDoc";
-
-interface MoveTarget {
-  docId: number;
-  name: string;
-}
+type ModalMode = "newDoc" | "newCat" | "renameCat" | "renameDoc";
 
 /**
  * P0-4 目录树组件：目录 + 文档混挂（未归类挂虚拟「未归类」组）。
- * 节点菜单：新建文档 / 新建子目录 / 重命名 / 移动到 / 删除（目录删除 = 文档移至根，不删文档）。
+ * 第三轮乐享式交互：
+ * - 「目录」标题行 hover 出「+」（新建菜单）/「···」（多选）
+ * - 目录节点菜单：新建文档 / 新建子目录 / 重命名 / 删除（文档移根）；目录名可点击 → 目录视图
+ * - 文档节点菜单：仅 重命名 / 删除（用户批注「保留重命名删除即可」）
+ * - 多选模式：节点前 Checkbox（目录+文档），顶部操作条仅 批量删除（用户批注「只要删除即可」）
  */
 export default function CategoryTree({
   kbId,
   refreshKey,
   canManage,
   onOpenDoc,
-  onOpenViewer,
+  onOpenCategory,
   onDocChanged,
+  showHeader = true,
 }: Props) {
   const [categories, setCategories] = useState<CategoryInfo[]>([]);
   const [documents, setDocuments] = useState<TreeNodeDocument[]>([]);
   const [loading, setLoading] = useState(false);
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
+  // P0-4 第三轮：多选批量删除
+  const [selectMode, setSelectMode] = useState(false);
+  const [checkedDocs, setCheckedDocs] = useState<Set<number>>(new Set());
+  const [checkedCats, setCheckedCats] = useState<Set<number>>(new Set());
+
+  // P0-4 v1.2：上传自足（「目录」行「+」菜单 → 上传文件；隐藏 input 选文件 → UploadModal 浮层，挂根目录）
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const [modalMode, setModalMode] = useState<ModalMode | null>(null);
   const [modalTitle, setModalTitle] = useState("");
@@ -137,6 +153,55 @@ export default function CategoryTree({
     onDocChanged?.();
   };
 
+  // ---- 多选模式 ----
+  const enterSelect = () => {
+    setCheckedDocs(new Set());
+    setCheckedCats(new Set());
+    setSelectMode(true);
+  };
+  const exitSelect = () => {
+    setSelectMode(false);
+    setCheckedDocs(new Set());
+    setCheckedCats(new Set());
+  };
+  const toggleDoc = (id: number) => {
+    setCheckedDocs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const toggleCat = (id: number) => {
+    setCheckedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const checkedCount = checkedDocs.size + checkedCats.size;
+
+  const batchDelete = () => {
+    Modal.confirm({
+      title: `删除选中的 ${checkedCount} 项？`,
+      content: "文档将同时清理向量索引与物理文件，不可恢复；目录删除后其下文档移至根。",
+      okText: "删除",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        if (checkedDocs.size > 0) {
+          await documentApi.batchDelete(kbId, [...checkedDocs]);
+        }
+        for (const id of checkedCats) {
+          await categoryApi.remove(kbId, id);
+        }
+        message.success(`已删除 ${checkedCount} 项`);
+        exitSelect();
+        refresh();
+      },
+    });
+  };
+
   // ---- 组树：目录嵌套 + 未归类虚拟节点 + 文档挂载 ----
   const docNode = (d: TreeNodeDocument): DataNode => ({
     key: `doc-${d.id}`,
@@ -148,12 +213,24 @@ export default function CategoryTree({
       ),
     title: (
       <span className={styles.nodeTitle}>
+        {selectMode && canManage && (
+          <Checkbox
+            checked={checkedDocs.has(d.id)}
+            onClick={(e) => e.stopPropagation()}
+            onChange={() => toggleDoc(d.id)}
+            style={{ marginRight: 4 }}
+          />
+        )}
         <span
           className={styles.nodeLabel}
           onClick={() =>
-            d.source === "online"
-              ? onOpenDoc({ id: d.id, filename: d.filename, source: d.source, categoryName: catName(d.category_id) })
-              : onOpenViewer(d.filename)
+            // P0-4 第三轮（T7）：上传文档也开 doc tab（只读正文），不再走 Modal 查看器
+            onOpenDoc({
+              id: d.id,
+              filename: d.filename,
+              source: d.source,
+              categoryName: catName(d.category_id),
+            })
           }
           title={d.filename}
         >
@@ -162,19 +239,17 @@ export default function CategoryTree({
             <span className={styles.nodeStatus}>{d.status === "error" ? "（失败）" : "（处理中）"}</span>
           )}
         </span>
-        {canManage && (
+        {canManage && !selectMode && (
           <Dropdown
             trigger={["click"]}
             menu={{
               items: [
-                { key: "move", label: "移动到", icon: <DragOutlined /> },
                 { key: "rename", label: "重命名", icon: <EditOutlined /> },
                 { type: "divider" },
                 { key: "delete", label: "删除", icon: <DeleteOutlined />, danger: true },
               ],
               onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
-                if (key === "move") openMoveModal(d);
                 if (key === "rename") openRenameDocModal(d);
                 if (key === "delete") deleteDoc(d);
               },
@@ -196,8 +271,22 @@ export default function CategoryTree({
         icon: <FolderOutlined style={{ color: "#1677ff" }} />,
         title: (
           <span className={styles.nodeTitle}>
-            <span className={styles.nodeLabel}>{c.name}</span>
-            {canManage && (
+            {selectMode && canManage && (
+              <Checkbox
+                checked={checkedCats.has(c.id)}
+                onClick={(e) => e.stopPropagation()}
+                onChange={() => toggleCat(c.id)}
+                style={{ marginRight: 4 }}
+              />
+            )}
+            <span
+              className={styles.nodeLabel}
+              onClick={() => onOpenCategory?.(c.id, c.name)}
+              title={c.name}
+            >
+              {c.name}
+            </span>
+            {canManage && !selectMode && (
               <Dropdown
                 trigger={["click"]}
                 menu={{
@@ -258,10 +347,10 @@ export default function CategoryTree({
     form.resetFields();
   };
 
-  const openNewCatModal = (c: CategoryInfo) => {
+  const openNewCatModal = (c: CategoryInfo | null) => {
     setActiveCategory(c);
     setModalMode("newCat");
-    setModalTitle(`新建子目录（${c.name}）`);
+    setModalTitle(c ? `新建子目录（${c.name}）` : "新建文件夹");
     form.resetFields();
   };
 
@@ -277,13 +366,6 @@ export default function CategoryTree({
     setModalMode("renameDoc");
     setModalTitle("重命名文档");
     form.setFieldsValue({ name: d.filename });
-  };
-
-  const openMoveModal = (d: TreeNodeDocument) => {
-    setActiveDoc(d);
-    setModalMode("moveDoc");
-    setModalTitle(`移动「${d.filename}」到`);
-    form.setFieldsValue({ category: d.category_id ?? 0 });
   };
 
   const deleteCategory = (c: CategoryInfo) => {
@@ -346,14 +428,6 @@ export default function CategoryTree({
         await documentApi.rename(kbId, activeDoc.id, values.name);
         message.success("文档已重命名");
         setModalMode(null);
-      } else if (modalMode === "moveDoc" && activeDoc) {
-        await categoryApi.moveDocuments(
-          kbId,
-          [activeDoc.id],
-          values.category === 0 ? null : values.category
-        );
-        message.success("文档已移动");
-        setModalMode(null);
       }
       refresh();
     } finally {
@@ -361,11 +435,30 @@ export default function CategoryTree({
     }
   };
 
-  // 目录选择树数据（移动到用；0 = 根/未归类）
-  const categoryTreeData = [
-    { title: "未归类（根）", value: 0, key: 0, children: [] as unknown[] },
-    ...categories.map((c) => ({ title: c.name, value: c.id, key: c.id, children: [] as unknown[] })),
-  ];
+  // 「目录」标题行「+」菜单（根级新建 / 上传文件，能力自足不依赖外部）
+  const triggerUpload = () => fileInputRef.current?.click();
+
+  const handleFileChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ""; // 允许重复选择同一文件
+    if (files.length === 0) return;
+    setUploadFiles(files);
+    setUploadOpen(true);
+  };
+
+  const headerPlusMenu = {
+    items: [
+      { key: "newDoc", label: "新建在线文档", icon: <FileAddOutlined /> },
+      { key: "newCat", label: "新建文件夹", icon: <PlusOutlined /> },
+      { type: "divider" as const },
+      { key: "upload", label: "上传文件", icon: <UploadOutlined /> },
+    ],
+    onClick: ({ key }: { key: string }) => {
+      if (key === "newDoc") openNewDocModal(null);
+      if (key === "newCat") openNewCatModal(null);
+      if (key === "upload") triggerUpload();
+    },
+  };
 
   if (loading && categories.length === 0 && documents.length === 0) {
     return (
@@ -377,6 +470,40 @@ export default function CategoryTree({
 
   return (
     <div className={styles.container}>
+      {showHeader && (
+        <div className={styles.treeHeader}>
+          <span className={styles.treeHeaderTitle}>
+            <AppstoreOutlined style={{ marginRight: 6 }} />
+            目录
+          </span>
+          {canManage && (
+            <span className={styles.headerActions}>
+              <Dropdown trigger={["click"]} menu={headerPlusMenu}>
+                <Tooltip title="新建">
+                  <Button type="text" size="small" icon={<PlusOutlined />} />
+                </Tooltip>
+              </Dropdown>
+              {!selectMode && (
+                <Tooltip title="多选">
+                  <Button type="text" size="small" icon={<EllipsisOutlined />} onClick={enterSelect} />
+                </Tooltip>
+              )}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* 多选操作条（仅删除，用户批注「只要删除即可」） */}
+      {selectMode && (
+        <div className={styles.batchBar}>
+          <span className={styles.batchCount}>已选 {checkedCount} 项</span>
+          <Button size="small" danger disabled={checkedCount === 0} onClick={batchDelete}>
+            删除
+          </Button>
+          <Button type="text" size="small" icon={<CloseOutlined />} onClick={exitSelect} />
+        </div>
+      )}
+
       {treeData.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -393,6 +520,27 @@ export default function CategoryTree({
           selectable={false}
         />
       )}
+
+      {/* P0-4 v1.2：上传自足——隐藏文件选择 + UploadModal 浮层（挂根目录） */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.docx,.doc,.txt,.md"
+        style={{ display: "none" }}
+        onChange={handleFileChosen}
+      />
+      <UploadModal
+        kbId={kbId}
+        categoryId={null}
+        files={uploadFiles}
+        open={uploadOpen}
+        onClose={() => {
+          setUploadOpen(false);
+          setUploadFiles([]);
+        }}
+        onUploaded={refresh}
+      />
 
       <Modal
         title={modalTitle}
@@ -421,17 +569,6 @@ export default function CategoryTree({
               rules={[{ required: true, message: "请输入名称" }]}
             >
               <Input placeholder="输入名称" />
-            </Form.Item>
-          </Form>
-        )}
-        {modalMode === "moveDoc" && (
-          <Form form={form} layout="vertical">
-            <Form.Item name="category" label="目标目录">
-              <TreeSelect
-                treeData={categoryTreeData as never}
-                treeDefaultExpandAll
-                placeholder="选择目标目录"
-              />
             </Form.Item>
           </Form>
         )}
