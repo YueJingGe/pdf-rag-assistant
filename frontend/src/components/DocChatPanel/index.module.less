@@ -11,7 +11,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid #ebedf0;
   flex-shrink: 0;
 }
 
@@ -88,10 +88,11 @@
 }
 
 /* P0-4 第四轮（T6）：输入区容器（信息源 tags + 输入行 + 免责行） */
+/* 返工 R4（v1.5 §12）：浅灰背景与主聊天同款；inputCard 极浅边框 */
 .inputArea {
   flex-shrink: 0;
-  border-top: 1px solid #f0f0f0;
   padding: 8px 12px 6px;
+  background: #f5f6f7;
 }
 
 .sourceTags {
@@ -101,19 +102,19 @@
   padding-bottom: 6px;
 }
 
-/* P0-4 第五轮（T5）：圆角输入容器（与主聊天同款，窄面板尺寸缩小） */
+/* P0-4 第五轮（T5）：圆角输入容器（与主聊天同款，窄面板尺寸缩小）；返工 R4 边框同款 */
 .inputCard {
   background: #fff;
-  border: 1px solid #e5e6eb;
+  border: 1px solid #ebedf0;
   border-radius: 12px;
   padding: 6px 10px 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 3px rgba(31, 35, 41, 0.05);
   display: flex;
   flex-direction: column;
   gap: 2px;
 
   &:focus-within {
-    border-color: #1677ff;
+    border-color: rgba(22, 119, 255, 0.4);
   }
 }
 

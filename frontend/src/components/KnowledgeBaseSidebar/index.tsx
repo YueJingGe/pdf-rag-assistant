@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Select,
   Button,
   Input,
   Modal,
@@ -10,7 +9,6 @@ import {
   Dropdown,
   Avatar,
   Tooltip,
-  Divider,
   Popconfirm,
   message,
 } from "antd";
@@ -28,6 +26,7 @@ import {
   HistoryOutlined,
   BarChartOutlined,
   RightOutlined,
+  EllipsisOutlined,
 } from "@ant-design/icons";
 import CategoryTree, { type OpenableDoc } from "../CategoryTree";
 import {
@@ -66,6 +65,8 @@ interface Props {
  * 库切换器（仅列知识库）→ 新建对话按钮（问AI 上方，对齐乐享）→ 导航（问AI / 知识地图(P1) / 主页(P1) / 检索调优(admin)）→
  * 历史对话列表（默认收起，标题箭头展开；kb=0 旧普通聊天会话不可见，迁移 P1）→
  * 目录树（新建/上传收拢到目录树「目录」行与节点「···」菜单内；打开文档选中态高亮）→ 底部用户卡。
+ * 返工 R2/R3（v1.5 §12）：头部改乐享式库标识区（标识块+库名+副标题+「···」菜单：切换库/重命名/管理，
+ * 替代 Select 下拉）；新建对话按钮主色实底；去硬分割线；用户卡固定左下角、树区内部滚动（无页面级滚动条）。
  * 个人知识库保护（T1）：不提供新建/删除知识库入口，仅保留重命名+管理
  * （识别锚点 name==='个人知识库'，迁移脚本 DEFAULT_TARGET_NAME；管理页删除按钮同步隐藏）。
  * 跨组件联动走轻量 CustomEvent 总线：
@@ -192,41 +193,47 @@ export default function KnowledgeBaseSidebar({
 
   return (
     <div className={styles.sidebar}>
-      {/* 顶部：库切换器 + 管理（第五轮 T1：个人知识库不可新建/删除，仅重命名+管理） */}
+      {/* 顶部：库标识区（返工 R2，对齐乐享：点击弹菜单=切换知识库（当前项高亮）/重命名/管理） */}
       <div className={styles.kbSwitcher}>
-        {/* P0-4 第四轮（T4）：仅列知识库，左上角始终显示库名（普通聊天=问答模式清空信息源） */}
-        <Select
-          className={styles.kbSelect}
-          size="small"
-          value={selectedId}
-          placeholder="选择知识库"
-          loading={loading}
-          onChange={(v) => onSelect(knowledgeBases.find((kb) => kb.id === v) ?? null)}
-          options={knowledgeBases.map((kb) => ({ value: kb.id, label: kb.name }))}
-        />
-        {current && (
-          <Dropdown
-            trigger={["hover"]}
-            menu={{
-              items: [
-                { key: "manage", label: "管理", icon: <ToolOutlined /> },
-                { key: "rename", label: "重命名知识库", icon: <EditOutlined /> },
-              ],
-              onClick: ({ key }) => {
-                if (key === "manage") navigate(`/spaces/${current.id}`);
-                if (key === "rename") openRenameModal(current);
-              },
-            }}
-          >
-            <Button size="small" icon={<SettingOutlined />} />
-          </Dropdown>
-        )}
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            selectedKeys: selectedId ? [`kb-${selectedId}`] : [],
+            items: [
+              ...knowledgeBases.map((kb) => ({ key: `kb-${kb.id}`, label: kb.name })),
+              { type: "divider" as const },
+              { key: "rename", label: "重命名知识库", icon: <EditOutlined />, disabled: !current },
+              { key: "manage", label: "管理", icon: <ToolOutlined />, disabled: !current },
+            ],
+            onClick: ({ key }) => {
+              if (key.startsWith("kb-")) {
+                onSelect(knowledgeBases.find((kb) => kb.id === Number(key.slice(3))) ?? null);
+              }
+              if (key === "manage" && current) navigate(`/spaces/${current.id}`);
+              if (key === "rename" && current) openRenameModal(current);
+            },
+          }}
+        >
+          <div className={styles.kbHeader}>
+            <span className={styles.kbBadge}>{current ? current.name.slice(0, 1) : "知"}</span>
+            <div className={styles.kbMeta}>
+              <span className={styles.kbName} title={current?.name}>
+                {current?.name ?? "选择知识库"}
+              </span>
+              <span className={styles.kbSubtitle}>
+                {current ? `知识库 · ${current.document_count} 篇文档` : "点击切换知识库"}
+              </span>
+            </div>
+            <EllipsisOutlined className={styles.kbMore} />
+          </div>
+        </Dropdown>
       </div>
 
-      {/* P0-4 第五轮（T2）：新建对话按钮（问AI 上方，对齐乐享） */}
+      {/* P0-4 第五轮（T2）：新建对话按钮（问AI 上方，对齐乐享）；返工 R3：主色实底企业级 */}
       <div className={styles.nav}>
         <Button
           block
+          type="primary"
           icon={<PlusOutlined />}
           className={styles.newConvBtn}
           onClick={handleNewConversation}
@@ -313,9 +320,7 @@ export default function KnowledgeBaseSidebar({
         )}
       </div>
 
-      <Divider style={{ margin: "8px 0" }} />
-
-      {/* 目录树（打开文档选中态：activeDocId 透传） */}
+      {/* 目录树（打开文档选中态：activeDocId 透传）；返工 R1：树区 flex 伸展+内部滚动；R3：去硬分割线 */}
       <div className={styles.treeWrap}>
         {selectedId ? (
           <CategoryTree
@@ -339,7 +344,7 @@ export default function KnowledgeBaseSidebar({
 
       {/* 底部用户卡 */}
       <div className={styles.userCard}>
-        <Avatar size="small" icon={<UserOutlined />} style={{ backgroundColor: "#1677ff" }} />
+        <Avatar size={26} icon={<UserOutlined />} style={{ backgroundColor: "#1677ff", flexShrink: 0 }} />
         <span className={styles.userName} title={user.display_name}>
           {user.display_name}
         </span>

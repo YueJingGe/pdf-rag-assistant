@@ -1,6 +1,58 @@
 # P0-4 乐享式知识库最小 demo — changelog
 
-> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8；v1.2 增补第三轮 §9；v1.3 增补第四轮 §10；v1.4 增补第五轮 §11）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）/ `0b76011`（第三轮）/ `39745f9`（第四轮）/ `5db38d1`（第五轮）
+> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8；v1.2 增补第三轮 §9；v1.3 增补第四轮 §10；v1.4 增补第五轮 §11；v1.5 增补第五轮返工 §12）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）/ `0b76011`（第三轮）/ `39745f9`（第四轮）/ `5db38d1`（第五轮）/ `1c47e0c`（第五轮返工）
+
+## 第五轮返工：侧栏企业级精修 + 布局缺陷修复 + 主区域背景对齐（2026-10-16）
+
+用户实测反馈两批（带截图）：①侧栏/信息源弹层出现滚动条、用户卡不贴底 ②侧栏字号/背景/颜色/icon 像 demo 不像企业版 ③主区域背景色与输入卡边框色与乐享不一致。按需求 §12（v1.5）实施 R1-R4：基线 commit `1c47e0c`。**纯前端样式/结构改动，后端 `backend/` 全量 diff 为空，RAG 禁区五文件 diff 为空，全程零新增 LLM 调用。**
+
+### 改动文件清单（全部前端）
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/pages/MainPage/` | R1：Sider `overflow:auto`→`hidden`（滚动收敛树区内部，页面级无滚动条）；内层 Layout 显式 `height:'100vh'`（保 `.sidebar` height:100% 百分比链）；border 色 #e5e6eb |
+| `frontend/src/components/KnowledgeBaseSidebar/index.tsx` | R2：头部 Select 下拉 → 乐享式标识区（Dropdown click 菜单：库列表 `selectedKeys` 高亮 + divider + 重命名/管理）；新建对话按钮 `type="primary"`；删 Divider 分隔线 |
+| `frontend/src/components/KnowledgeBaseSidebar/index.module.less` | 全量重写（193 行）：thinScrollbar mixin（6px 透明轨道 hover 显现）；色彩体系 token（文字 #1f2329/#646a73/#8f959e、hover #f5f6f7、active #e8f3ff/#1677ff、边框 #e5e6eb）；kbBadge 32px 渐变蓝 + kbMeta 两行 + kbMore；newConvBtn 36px 主色阴影；navItem 14px / icon 16px；treeWrap `flex:1 + min-height:0 + overflow-y:auto`（R1 关键）；userCard border-top 贴底 |
+| `frontend/src/components/InputPlusPopover/index.module.less` | R1：twoPane 固定宽 460px（防自适应漂移）；kbPane 160px 细滚动条；treePane `overflow-x:hidden` + 细滚动条；sourceTree 节点宽度约束（treenode 100% + content-wrapper max-width calc(100%-4px)），标题超宽 ellipsis |
+| `frontend/src/components/CategoryTree/index.module.less` | R3：树节点字号 13px |
+| `frontend/src/components/ChatWindow/index.module.less` | R4：.container 背景 #f5f6f7（乐享式浅灰主区域）；header/assistantFooter 分隔线 #ebedf0；inputArea 去 border-top、背景 transparent（与消息区一体）；inputCard 边框 #ebedf0 + 阴影 rgba(31,35,41,0.05) + 聚焦 rgba(22,119,255,0.4) 描边 |
+| `frontend/src/components/DocChatPanel/index.module.less` | R4：header 分隔线 #ebedf0；inputArea 背景 #f5f6f7 去 border-top；inputCard 同款边框/阴影/聚焦 |
+| `docs/requirements/P0-4-lexiang-style-kb.md` | 追加 §12（v1.5）：R1 布局缺陷 / R2 头部标识区 / R3 侧栏精修 / R4 主区域背景 |
+
+### 关键设计摘要
+
+- **滚动/贴底根因链**：Sider overflow auto + `.treeWrap` 类缺失（tsx 引用但 less 无定义）→ 目录树撑高内容 → Sider 整体滚动、userCard 被顶离底部；修复三件套 = Sider hidden + treeWrap 内部滚动 + Layout 显式 100vh
+- **色彩体系 token 化**：文字主 #1f2329 / 次 #646a73 / 辅 #8f959e；hover 底 #f5f6f7；active #e8f3ff + #1677ff；边框 #e5e6eb；输入卡边框 #ebedf0；主区域背景 #f5f6f7——全部对齐乐享取色
+- **thinScrollbar mixin**：默认透明轨道，hover 才显现 rgba(0,0,0,0.18)——滚动可用但视觉无滚动条
+- **头部库标识区**：32px 渐变蓝徽标（库名首字）+ 库名 14px/600 + 副标题「知识库 · N 篇文档」；Dropdown `selectedKeys` 高亮当前库（antd 原生勾选，免手写 icon）
+- **R4 主区域浅灰**：AI 回答直接排在 #f5f6f7 背景上、输入卡白色浮起（极浅边框 + 1px 阴影、聚焦淡蓝描边）——消除「白底白卡无层次」的 demo 感
+
+### 验收结果
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | 无页面级滚动条 | ✅ DOM 断言 `hasPageScrollbar:false`、sider overflow hidden |
+| 2 | 用户卡贴底 | ✅ `userCardBottomGap:0`（treeWrap flexGrow:1 内部滚动） |
+| 3 | 头部乐享式标识区 | ✅ 「个｜个人知识库｜知识库 · 3 篇文档」结构；菜单 selectedKeys 高亮当前库 |
+| 4 | 侧栏规格对齐 | ✅ kbName 14px/600、navItem 14px padding 8px 10px、newConvBtn rgb(22,119,255) 主色 |
+| 5 | 弹层无横向滚动条 | ✅ twoPane 460px + treePane overflow-x hidden + 节点宽度约束 |
+| 6 | 主区域浅灰背景 | ✅ DOM 断言 container `rgb(245,246,247)` = #f5f6f7 |
+| 7 | 输入卡边框/阴影/聚焦 | ✅ 边框 `rgb(235,237,240)` = #ebedf0、阴影 `rgba(31,35,41,0.05) 0 1px 3px`、inputArea 无 border-top 背景 transparent |
+| 8 | header/footer 分隔线 | ✅ 均为 `rgb(235,237,240)` = #ebedf0 |
+| 9 | 质量门 | ✅ tsc -b 零错误；后端零改动（无需重启）；禁区五文件 diff 空 |
+
+### 遇到的问题
+
+1. **侧栏滚动根因是 less 类缺失而非仅 Sider overflow**：`.treeWrap` 在 tsx 引用但 less 无定义，内容撑高触发 Sider 滚动；只改 overflow 不够，须树区自身成为滚动容器
+2. **内层 Layout 需显式 height:100vh**：`.sidebar` 的 `height:100%` 依赖父链高度，antd Layout 默认不产生高度约束，缺失时 flex 拉伸失效
+3. **Popover 自适应宽度漂移**：两栏内容宽度不固定时 antd 按内容计算位置，勾选后可能漂移；固定 twoPane 460px 解决
+4. **样式计算断言通过 ≠ 企业级视觉**：第五轮交付时逐项断言全绿，用户实测仍指出侧栏像 demo——视觉还原必须对照真实产品截图逐区块精修（色彩 token/字号/区块层级），不能只靠单点样式断言
+
+### 遗留事项（P1）
+
+- 历史对话列表空态样式未做（乐享有插画空态）
+- 侧栏暗色模式不适配（当前仅亮色体系）
+- 信息源弹层/侧栏移动端适配未做（桌面优先，前轮已登记）
 
 ## 第五轮：UI 还原乐享 + 信息源文档级多选（2026-10-16）
 

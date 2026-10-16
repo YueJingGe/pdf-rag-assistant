@@ -136,8 +136,9 @@ export default function MainPage({ user, onLogout }: Props) {
 
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
-      <Layout style={{ flex: 1, overflow: 'hidden' }}>
-        <Sider width={280} style={{ background: '#fff', borderRight: '1px solid #f0f0f0', overflow: 'auto' }}>
+      <Layout style={{ flex: 1, overflow: 'hidden', height: '100vh' }}>
+        {/* 返工 R1（v1.5 §12）：Sider 去 overflow auto——滚动收敛到树区内部（无页面级滚动条），用户卡固定贴底 */}
+        <Sider width={280} style={{ background: '#fff', borderRight: '1px solid #e5e6eb', overflow: 'hidden' }}>
           <KnowledgeBaseSidebar
             selectedId={selectedKB?.id ?? null}
             onSelect={handleSelectKB}

@@ -3,11 +3,13 @@
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  /* 返工 R4（v1.5 §12）：主区域浅灰背景（乐享式：AI 回答直接排在浅灰背景上，输入卡白色浮起） */
+  background: #f5f6f7;
 }
 
 .header {
   padding: 12px 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid #ebedf0;
   background: #fff;
   display: flex;
   justify-content: space-between;
@@ -62,7 +64,7 @@
   justify-content: space-between;
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid #ebedf0;
 }
 
 .aiDisclaimer {
@@ -77,12 +79,12 @@
 }
 
 .inputArea {
-  padding: 16px;
-  border-top: 1px solid #f0f0f0;
+  padding: 8px 16px 4px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  background: #fff;
+  gap: 4px;
+  /* 返工 R4：与消息区同底色连成一体（无硬分割线），输入卡白色浮起 */
+  background: transparent;
   flex-shrink: 0;
 }
 
@@ -123,21 +125,22 @@
 }
 
 /* P0-4 第五轮（T5）：圆角输入容器（乐享式：附件预览→tags→无边框输入框→左下「+」右下圆形发送） */
+/* 返工 R4：边框极浅 #ebedf0 + 轻阴影（乐享输入卡质感），聚焦淡蓝描边 */
 .inputCard {
   width: 100%;
   max-width: 780px;
   margin: 0 auto;
   background: #fff;
-  border: 1px solid #e5e6eb;
+  border: 1px solid #ebedf0;
   border-radius: 16px;
   padding: 8px 12px 6px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 3px rgba(31, 35, 41, 0.05);
   display: flex;
   flex-direction: column;
   gap: 4px;
 
   &:focus-within {
-    border-color: #1677ff;
+    border-color: rgba(22, 119, 255, 0.4);
   }
 }
 

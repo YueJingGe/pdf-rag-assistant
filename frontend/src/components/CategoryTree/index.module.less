@@ -1,5 +1,11 @@
 .container {
   padding: 4px 0;
+  /* 返工 R3（v1.5 §12）：树节点字号统一 13px（与历史对话/侧栏正文一致） */
+  font-size: 13px;
+
+  :global(.ant-tree) {
+    font-size: 13px;
+  }
 
   :global(.ant-tree-node-content-wrapper) {
     display: inline-flex;
