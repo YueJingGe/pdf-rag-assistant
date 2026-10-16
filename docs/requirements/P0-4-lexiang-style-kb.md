@@ -583,6 +583,72 @@
 - 现状：第五轮 T4 实现为用户右侧 #e8f3ff 气泡（主聊天/DocChatPanel 同款）
 - 修复：ChatWindow/DocChatPanel 用户消息改左对齐浅灰块（含 sourceTags 信息源 tag + 问题文字，两行结构）；主聊天与工作台同款保持一致
 
+**R14 信息源弹层横向滚动条根治（用户反馈「滚动条问题也没有解决」+ 截图绿框，R8 后二轮）**
+- 现状：R8 已加宽 twoPane 至 560px + R1 已设 treePane overflow-x:hidden，但弹层底部仍现深色粗横向滚动条（树节点标题被截断）
+- 根因：滚动条宿主非 treePane，而是内部 antd Tree 虚拟滚动容器 `.ant-tree-list-holder`（antd 自带 `overflow:auto`，默认样式深色粗条与自定6px细条外观明显不同）；外层 hidden 约束不到内部容器
+- 修复：① Tree 加 `virtual={false}`（当前树节点量级小，无虚拟滚动需求，消除内层滚动容器变量）；② sourceTree `:global` 对 `.ant-tree-list` / `.ant-tree-list-holder` / `.ant-tree-list-holder > div` 三层容器兜底 `overflow-x:hidden`
+
+**R15 侧栏各行 icon 左缘统一（用户反馈「左侧 icon 也没有对齐」+ 截图绿线，R7 后二轮）**
+- DOM 实测：问AI/知识地图/主页 icon `left:18`（对齐 ✅）；「目录」AppstoreOutlined `left:12`（treeHeader padding-left 8 vs navItem 10，差 6px 偏左）；「历史对话」HistoryOutlined `left:36`（折叠 caret 前置占位 10px+gap 8px，偏右）
+- 修复：① CategoryTree treeHeader padding-left 8→14，「目录」icon 对齐 18；② 历史行 caret 移至行尾（margin-left:auto），HistoryOutlined 对齐 18、文案列与导航行齐（收起 ▾ / 展开 ▴ 语义不变）
+
+**R16 点击「问AI」默认进入新对话空态页（用户反馈「点击问ai默认应该是新对话的页面，而不是历史数据的页面」+ 前后对比截图）**
+- 现状：「问AI」行 onClick=onGoChat（仅切视图，保留当前活跃会话 → 点进去显示历史会话内容）；仅「+」icon 走新建对话
+- 修复：「问AI」行 onClick 改 handleNewConversation（dispatch p04:conv-new 清空开新会话 + 切视图，与「+」一致 → 空态欢迎页「今天从哪里开始」）；历史会话靠历史列表条目切换
+
+**R17 目录树一比一还原乐享（用户反馈「目录样式和腾讯乐享保持一致，一比一还原哦」+ 4 张乐享对照截图）**
+- 乐享形态：① 目录行 hover 右侧浮现双工具钮「⋮ 更多操作」+「+ 新建」（+菜单含新建/上传，上传挂该目录）；② 展开箭头小灰 ∨ 紧贴 folder，子级浅缩进；③ 文档节点带类型色 icon（PDF 红）；④ folder 金描边色；⑤ 文档行竖三点 ⋮；⑥ 选中行浅蓝底圆角
+- 现状（第三/四轮遗留）：目录行单一「···」菜单（新建/重命名/删除混排）；文档 icon 通用灰 FileText（仅在线 MD 绿）；folder 蓝；缩进 antd 默认 24px；文档行「···」为文本三点
+- 修复（按项目能力裁剪乐享菜单）：① 目录行改双工具钮「⋮」(重命名/删除) +「+」(新建文档/新建子目录/上传文件挂该目录)，hover 浮现行尾对齐；② 缩进 CSS 24→16px（antd 该版 TreeProps 无 indent，改 `.ant-tree-indent-unit{width:16px}`）；③ 文档 icon 按扩展名着色（PDF 红 #e64545 / Word 蓝 #2b7cd3 / 在线 MD 绿 / 其他灰）；④ folder #1677ff→#faad14 金色；⑤ 文档行改 MoreOutlined 竖三点；⑥ 上传能力升级：UploadModal categoryId 由固定根改 uploadCategoryId state（目录行上传挂该目录，标题行上传仍挂根）
+- 能力外不做的乐享菜单项：新标签页打开/复制链接/收藏/快速访问/复制到/移动到、新建智能文档/智能表格/从模板新建/引用知识/上传文件夹/Figma/导入（与第三轮用户批注「保留重命名删除即可」一致）
+
+**R18 目录树视觉二次对齐（用户否定 R17「这样式哪里一样了，你实现的」+ 前后对照截图）**
+- 根因：R17 仅调缩进宽度，漏掉三处最显眼差异：① 箭头形态——antd 默认实心黑三角 vs 乐享灰色细线 chevron（∨/＞）；② 16px 缩进层级感丢失（子行与父行几乎齐平）；③ icon-文字间距 4px 偏紧
+- 修复：① Tree 加 `switcherIcon={<DownOutlined />}`（细线 chevron，antd 自动处理收起 -90° 旋转）；② less 选择器升为 `.ant-tree .ant-tree-switcher`（特异性压过 antd，色 #8f959e/10px）；③ 缩进 16→20px 恢复层级感；④ `.ant-tree-iconEle` margin-right 6px；⑤ treenode 行 padding 2px + hover 浅灰 #f5f6f7 整行反馈
+
+**R19 回答 footer 乐享化 + 「添加到」弹框（用户批注「两个 icon 距离这么远干嘛，参考这里的添加到和复制，以及添加到有一个弹框的交互」+ 乐享四张截图）**
+- 根因：`.assistantFooter` 三子元素 space-between 被拉散到行两端
+- 修复：① footer 重排为「[📄添加到] [复制] 免责文案」紧凑排列（gap 4/8px），「存为知识库文档」icon 钮升级为乐享式「添加到」文字按钮；② 弹框升级乐享式：宽 640、标题「添加到」+ 副标题「可添加到有新建权限的知识库目录下」、左栏 KB 列表（点击切换）+ 右栏目录树（根行「知识库一级目录」选中 ✓）、底部「+ 新建文件夹」行内交互（Input+确定 → categoryApi.create 后刷新树）、取消/确认右下角；保存链路不变（chatApi.saveMessageToKb）
+
+**R20 目录树与弹层系统性间距修复（用户批评「你看间距啊，不要我说哪里你就看哪里」「面板太窄了内容过宽了」）**
+- 目录树三处：① switcher 24→16px + margin 2px（箭头-folder 视觉间距 12→≈5px 对齐乐享）；② 行高 28→34px（treenode padding 5px 0，升特异性）；③ **content-wrapper 设 flex+min-width:0**——根治长文件名硬截断无省略号 bug（antd 该节点默认非 flex，nodeTitle 的 flex:1 失效内容撑溢出被硬截）
+- 信息源弹层滚动条真凶：**`.sourcePanel` 仅 280px 装不下内部 560px twoPane**——横向滚动条宿主是 sourcePanel 本身（R14 在树内部找错了宿主）；修复：面板 280→600px + overflow-x:hidden 兕底
+- 方法论修正：滚动条排查必须沿滚动容器链自上而下量 scrollWidth/clientWidth，而非只查目标组件内部
+
+**R21 历史会话条目层级缩进（用户批注「明显展开的应该比上一层的标题缩进一些」）**
+- 修复：historyItem 左内边距 10→30px，会话条目相对「历史对话」标题缩进 20px（实测标题 icon left=18 / 条目 icon left=38）
+
+**R22 信息源级联勾选（用户批注「你没有级联的概念么，最上层都选上了，为什么下层的还是空的」）**
+- 根因：勾库清 docIds 是整库语义（后端整库优先），但右栏目录树勾选态只从 docIds 推导，无视觉级联
+- 修复（整库⇄文档级双向转换）：① 勾库 → treeCheckedKeys 级联返回该库全部 doc-*（树全勾视觉）；② 树上勾满全部文档 → 自动升级为整库勾选（kbIds 表达，无文档上限）；③ 部分/清空 → 库降级为文档级精确表达（kbIds 移除、docIds 承接）；④ 左栏 KB checkbox 增加 indeterminate 半选态（该库文档部分勾选未达整库）；实测：勾库→树 6 勾，取消一文档→库变半选，取消库→树清零
+
+**R23 目录树 hover 双层阴影（用户批注「你没发现你阴影有两层么」）**
+- 根因：R20 加的 treenode 整行 hover 灰底与 antd content-wrapper 自带 hover 灰底叠加，两层圆角矩形边界错位
+- 修复：`.ant-tree-node-content-wrapper:hover { background: transparent }`，只保留整行一层
+
+**R24 添加到弹框交互打磨（用户批注「没有收起和取消啊」+ 预览裸露 markdown 源码）**
+- 修复：① 新建文件夹编辑态补「取消」按钮 + Esc 收起（交互闭环）；② 内容预览区改 ReactMarkdown 渲染（与消息区同款样式，maxHeight 140 滚动），替代裸露星号井号源码
+
+**R25 目录树展开箭头统一移行尾（用户批注「箭头明显没有缩紧」「展开收起箭头统一放右侧，和历史对话一样」）**
+- 修复：switcher 改 absolute 定位行尾（right 10px + 垂直居中），folder 从行首开始自然消除箭头-folder 间距；hover 时箭头透明让位给「⋮/+」工具钮（二者不同时显示，非 hover 工具钮本就隐藏）；treenode padding 左右 8px（folder 起点 x=20 接近导航 icon 基准 18）
+- 实测：switcher absolute right=12px、folder left=20、folder→文字 gap 6px、文档行相对缩进 20px、行高 34px 保持
+
+**R26 question 右对齐 + 历史条目「⋮」弹出层（用户对照乐享批注「question的样式不对」「question从右侧开始」「设置一个最大宽度」「对话历史里的这个弹出层有吗」）**
+- 修复：① userBubble 左对齐改右对齐（margin-left:auto，R13 理解偏差纠正）+ max-width 72%；② 历史条目删除钮（Popconfirm）升级乐享式「⋮」Dropdown 弹出层：编辑名称（行内 Input，Enter 确认/Esc 收起）+ 删除对话（Modal.confirm 二次确认）；③ **新增后端小端点**（偏离纯前端约束的理由：乐享交互需要真实重命名，假前端刷新即丢违反持久化规范）：PATCH /api/chat/conversations/{id}（chat_service.rename_conversation，复用 get_own_conversation 归属校验）
+- 实测：气泡贴右缘 gapRight=0、max-width 72%、#ececee ✅；⋮ 菜单→行内编辑→Enter→PATCH 落库→列表刷新全链路 ✅（改名后已还原）；无 token PATCH=401 ✅
+
+**R27 字号/字色/选中态 token 全局统一（用户批注「文字大小一样吗，选中态一样吗，你要保证同样的交互整体的风格是一样的」）**
+- 排查结论（DOM 实测）：历史条目与树行字号均已 13px（一致，用户见差异疑似旧 CSS 未刷新）；真不统一的是：① 树行字色 antd 默认 rgba(0,0,0,.88) vs 历史 #1f2329；② 选中态：导航/历史=#e8f3ff 整行+蓝字+600，树=#e6f4ff 文字小块+400
+- 修复：nodeLabel 字色统一 #1f2329；树选中改蓝字 600（nodeLabelActive）+ #e8f3ff 色块（nodeTitleActive，nodeTitle flex:1 占满行内容区）——统一 token：**选中 = #e8f3ff 底 + #1677ff 字 + 600**
+- 注：整行底先后试 :has 与 antd TreeNode className 透传，实测规则存在/类匹配但 computed 不应用（浏览器怪癖），自定义 span 路径已验证生效
+
+**R28 树行溢出省略号根治（用户批注「超出省略号，这不是前端很常用的手段吗」+ 底部横向滚动条）**
+- 根因（元素级测量）：ellipsis 链路断在 antd 中间层 span.ant-tree-title（content-wrapper 与自定义 nodeTitle 之间）未设 flex——wrapper 235px 被 title 349px 内容撑穿（label 325 不压缩）；R20 只改了 content-wrapper 漏了这一环；行内容 404px 撑 holder → treeWrap sw 408 > 279 出横向滚动条（同根因）
+- 修复：.ant-tree-title 补 display:flex + flex:1 + min-width:0；实测 label 压缩 165px、ellipsis 三件套生效、treeWrap sw=cw=279 滚动条消失
+
+**R29 加粗统一（用户批注「有的文字加粗有的不加粗」）**
+- 与 R27 同根：历史选中 600 粗 vs 树选中 400 不粗；随 R27 选中态统一（600）一并解决
+
 ### 12.4 验收标准
 
 1. 页面级与侧栏无滚动条（仅树区内部滚动）；信息源弹层目录树无横向滚动条
@@ -599,6 +665,22 @@
 12. 文档工作台问AI 弹层为两栏模式（可勾到具体文档）；勾文档后发送走 multi_scope（引用含所选文档内容）
 13. 问AI 收起态：顶栏最右「问AI」按钮（×旁）；展开态：顶栏按钮隐藏、面板右上角「关闭」icon 可收起
 14. 用户提问块为左对齐浅灰圆角块（含信息源 tag + 问题文字），主聊天/文档工作台样式一致（DOM 断言对齐/背景色）
+15. R14：信息源弹层打开状态无任何横向滚动条——弹层内不存在 scrollWidth > clientWidth 的可滚动元素（antd Tree 三层虚拟容器 overflow-x hidden）
+16. R15：侧栏问AI/知识地图/主页/历史对话/目录各行主 icon 左缘同一垂直线（DOM 断言 left 一致）；历史行折叠 caret 位于行尾
+17. R16：点击「问AI」行后主区域为新对话空态（无消息气泡、显示欢迎文案）；查看历史会话仅通过历史列表条目
+18. R17：目录行 hover 浮现「⋮/+」双钮（⋮=重命名/删除；+=新建文档/子目录/上传文件挂该目录）；缩进 16px；文档 icon 类型色（PDF 红/Word 蓝/MD 绿）；folder 金色；文档行竖三点 ⋮；选中行浅蓝底
+19. R18：树展开箭头为灰色细线 chevron（展开 ∨/收起 ＞，非 antd 实心三角）；缩进 20px；icon-文字间距 6px；行 hover 浅灰背景
+20. R19：回答 footer「添加到」文字按钮与复制按钮紧凑相邻（gap ≈4px），免责文案跟随不拉伸；「添加到」弹框双栏（KB 列表+目录树）+ 新建文件夹行内交互 + 取消/确认
+21. R20：目录树箭头-folder 视觉间距 ≈5px、行高 34px；长文件名超宽时 ellipsis（无硬截断）；信息源弹层面板 600px 全链路 scrollWidth=clientWidth（无横向滚动条）
+22. R21：历史会话条目相对「历史对话」标题缩进 20px（条目 icon left = 标题 icon left + 20）
+23. R22：勾整库 → 右栏树全部文档勾选；树上勾满 → 库自动勾上；部分勾选 → 库显示半选；取消库 → 树清空
+24. R23：目录树行 hover 仅一层浅灰背景（无 content-wrapper 双层叠加）
+25. R24：新建文件夹编辑态有取消/Esc 可收起；内容预览为 markdown 渲染（无星号井号源码裸露）
+26. R25：目录树展开/收起箭头位于行尾垂直居中（与历史对话 caret 一致）；folder 行首起步；hover 行时箭头隐藏、工具钮浮现
+27. R26：question 气泡贴右缘且 ≤72% 宽；历史条目 hover「⋮」→ 编辑名称（行内 Input）与删除对话（二次确认）；重命名 PATCH 落库刷新后仍在
+28. R27：侧栏列表项（历史/树）字号均 13px、字色 #1f2329；选中态三处（导航/历史/树）均为 #e8f3ff 底 + #1677ff 字 + 600 字重
+29. R28：超长文档名/会话名在树内显示省略号不溢出；侧栏底部无横向滚动条
+30. R29：树选中与历史选中字重一致（600），无「有的粗有的不粗」
 
 ### 12.5 实施顺序
 

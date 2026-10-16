@@ -247,6 +247,8 @@ export default function InputPlusPopover({
   };
 
   // 右栏目录树勾选：doc-* 直接收集，cat-* 展开为其下全部文档；跨库保留 + 上限 20
+  // 返工 R22（v1.5 §12）：级联语义——全选该库全部文档 → 升级为整库勾选（kbIds 表达，无文档上限）；
+  // 部分选择/清空 → 该库降级为文档级精确表达（从 kbIds 移除，docIds 承接）
   const handleTreeCheck = (
     kbId: number,
     checked: string[] | { checked: string[] }
@@ -266,12 +268,22 @@ export default function InputPlusPopover({
     }
     const kbDocIds = new Set(tree.documents.map((d) => d.id));
     const otherKbDocIds = source.docIds.filter((id) => !kbDocIds.has(id));
+    const allChecked =
+      kbDocIds.size > 0 && [...kbDocIds].every((id) => docIdSet.has(id));
+    if (allChecked) {
+      const nextKbIds = source.kbIds.includes(kbId)
+        ? source.kbIds
+        : [...source.kbIds, kbId];
+      onSourceChange({ docSelected: false, kbIds: nextKbIds, docIds: otherKbDocIds });
+      return;
+    }
+    const nextKbIds = source.kbIds.filter((id) => id !== kbId);
     const merged = [...new Set([...otherKbDocIds, ...docIdSet])];
     if (merged.length > MAX_SCOPE_DOCS) {
       message.warning(`文档级多选最多 ${MAX_SCOPE_DOCS} 个，请勾选知识库整库检索`);
       return;
     }
-    onSourceChange({ docSelected: false, kbIds: source.kbIds, docIds: merged });
+    onSourceChange({ docSelected: false, kbIds: nextKbIds, docIds: merged });
   };
 
   // docId → kbId 归属（来自已缓存树），供右栏受控勾选态计算
@@ -289,12 +301,25 @@ export default function InputPlusPopover({
     [treeKbId, treeCache]
   );
   // 该库受控勾选 keys：仅传 doc-*，目录全/半选态由 antd 按子节点自动推导
+  // 返工 R22（v1.5 §12）：整库勾选 → 该库全部文档级联显示勾选（与左栏 checkbox 联动）
   const treeCheckedKeys = useMemo(() => {
     if (treeKbId === null) return [];
+    if (source.kbIds.includes(treeKbId)) {
+      return (treeCache[treeKbId]?.documents ?? []).map((d) => `doc-${d.id}`);
+    }
     return source.docIds
       .filter((id) => docOwnerMap.get(id) === treeKbId)
       .map((id) => `doc-${id}`);
-  }, [treeKbId, source.docIds, docOwnerMap]);
+  }, [treeKbId, source.kbIds, source.docIds, docOwnerMap, treeCache]);
+
+  // 返工 R22：左栏 KB checkbox 半选态（该库文档被部分勾选，未达整库）
+  const kbPartial = (kbId: number) => {
+    if (source.kbIds.includes(kbId)) return false;
+    const docs = treeCache[kbId]?.documents ?? [];
+    if (docs.length === 0) return false;
+    const cnt = source.docIds.filter((id) => docs.some((d) => d.id === id)).length;
+    return cnt > 0 && cnt < docs.length;
+  };
 
   const kbName = (id: number) =>
     allKbs.find((kb) => kb.id === id)?.name ?? `知识库${id}`;
@@ -407,6 +432,7 @@ export default function InputPlusPopover({
                         >
                           <Checkbox
                             checked={source.kbIds.includes(kb.id)}
+                            indeterminate={kbPartial(kb.id)}
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => handleToggleKb(kb.id, e.target.checked)}
                           />
@@ -441,6 +467,7 @@ export default function InputPlusPopover({
                             checkable
                             blockNode
                             defaultExpandAll
+                            virtual={false}
                             className={styles.sourceTree}
                             treeData={sourceTreeData}
                             checkedKeys={treeCheckedKeys}

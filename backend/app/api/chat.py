@@ -274,6 +274,25 @@ async def delete_conversation(
     return {"detail": "Conversation deleted"}
 
 
+class ConversationRenameRequest(BaseModel):
+    name: str
+
+
+@router.patch("/conversations/{conversation_id}")
+async def rename_conversation(
+    conversation_id: int,
+    req: ConversationRenameRequest,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """重命名会话（P0-4 第五轮返工 R26：历史条目「⋮」→ 编辑名称）。"""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="name 不能为空")
+    await chat_service.rename_conversation(db, conversation_id, name, current_user)
+    return {"detail": "Conversation renamed"}
+
+
 ALLOWED_FILE_EXTENSIONS = {
     ".pdf", ".docx", ".doc", ".xls", ".xlsx", ".ppt", ".pptx",
     ".png", ".jpg", ".jpeg", ".csv", ".py", ".txt", ".md",

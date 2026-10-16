@@ -100,14 +100,18 @@
   transition: color 0.2s;
 }
 
-/* P0-4 第五轮（T2）：新建对话按钮（问AI 上方）；返工 R3：主色实底（乐享「+新建」风格） */
-.newConvBtn {
-  margin: 8px 4px 4px;
-  border-radius: 8px;
+/* 返工 R5（v1.5 §12）：新建对话入口改「问AI」行右侧 icon（常显弱化色，hover 变主色；替代原通栏主色按钮） */
+.navNewBtn {
+  margin-left: auto;
   font-size: 14px;
-  font-weight: 500;
-  height: 36px;
-  box-shadow: 0 2px 4px rgba(22, 119, 255, 0.18);
+  color: #8f959e;
+  border-radius: 6px;
+  padding: 2px;
+  transition: color 0.15s;
+
+  &:hover {
+    color: #1677ff;
+  }
 }
 
 /* ---- 导航项（问AI / 知识地图 / 主页 / 检索调优） ---- */
@@ -178,28 +182,37 @@
 }
 
 .historyCaret {
-  font-size: 10px;
+  /* 返工 R15（v1.5 §12）：caret 行尾右置（margin-left:auto），主 icon 与导航行左缘对齐 */
+  margin-left: auto;
+  font-size: 12px;
   color: #8f959e;
   transition: transform 0.2s;
 }
 
+/* 返工 R6（v1.5 §12）：收起=▾（向下），展开旋转 180°=▴（向上） */
 .historyCaretOpen {
-  transform: rotate(90deg);
+  transform: rotate(-180deg);
 }
 
+/* 返工 R7（v1.5 §12）：历史对话标题行规格与导航行统一（文案 14px #1f2329 / 时钟 icon 16px #646a73） */
 .historyTitle {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #8f959e;
-  padding: 8px 10px 4px;
+  gap: 8px;
+  font-size: 14px;
+  color: #1f2329;
+  padding: 8px 10px;
   cursor: pointer;
   user-select: none;
 
   &:hover {
-    color: #646a73;
+    color: #1677ff;
   }
+}
+
+.historyTitleIcon {
+  font-size: 16px;
+  color: #646a73;
 }
 
 .historyEmpty {
@@ -212,7 +225,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  /* 返工 R21（v1.5 §12）：会话条目比「历史对话」标题缩进一层（20px），层级分明 */
+  padding: 6px 10px 6px 30px;
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
@@ -223,7 +237,7 @@
   &:hover {
     background: #f5f6f7;
 
-    .historyDelete {
+    .historyMore {
       opacity: 1;
     }
   }
@@ -257,12 +271,26 @@
   white-space: nowrap;
 }
 
-.historyDelete {
+/* 返工 R26（v1.5 §12）：删除钮改乐享式「⋮」弹出层（hover 浮现，与目录树工具钮同模式）；
+   菜单项：编辑名称（蓝） / 删除对话（红） */
+.historyMore {
   opacity: 0;
   transition: opacity 0.15s;
-  color: #ff4d4f;
-  font-size: 12px;
+  color: #646a73;
+  font-size: 14px;
   flex-shrink: 0;
+  border-radius: 4px;
+
+  &:hover {
+    background: #e5e6eb;
+    color: #1f2329;
+  }
+}
+
+/* 行内编辑名称（替代整条 Modal，Enter 确认 / Esc 收起） */
+.historyEditInput {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ---- 目录树区（返工 R1：flex 伸展 + 内部滚动 → 页面级/侧栏级无滚动条，用户卡固定贴底） ---- */

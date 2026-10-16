@@ -5,6 +5,7 @@ import {
   StopOutlined,
   PlusOutlined,
   FileTextOutlined,
+  CloseOutlined,
 } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -21,6 +22,7 @@ interface MsgItem {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+  sourceTags?: string[]; // 返工 R13：发送时信息源快照（问题块首行 tag）
 }
 
 interface Props {
@@ -28,6 +30,8 @@ interface Props {
   docId: number;
   docName: string;
   onCitationClick?: (info: CitationClickInfo) => void;
+  /** 返工 R12（v1.5 §12）：面板 header 右上角「关闭」→ 父级收起面板（展开态顶栏不再放按钮，对齐乐享） */
+  onCollapse?: () => void;
 }
 
 /**
@@ -37,10 +41,12 @@ interface Props {
  * 默认信息源=当前文档（tag 展示），可切全部知识/各知识库（多选），清空=纯直聊。
  * 均走后端轻流式（不落会话，刷新即清）；文档面板仅问答模式（Agent 不进入）。
  * 第五轮（T4/T5/T7）：消息形态与输入区布局对齐主聊天（用户右气泡/AI 左纯文本、
- * 圆角输入容器 + 左下「+」右下圆形发送）；placeholder 用 derivePlaceholder 统一四态；
- * 不开放文档级多选（allowDocScope=false，避免轻流式误落会话）。
+ * 圆角输入容器 + 左下「+」右下圆形发送）；placeholder 用 derivePlaceholder 统一四态。
+ * 返工 R10（v1.5 §12）：放开文档级多选（allowDocScope 默认 true，与主聊天同构）——
+ * docIds 非空走 documentIds 多范围合并链（useSSE 已支持，后端零改动）；当前文档轻流式与 docIds/kbIds 互斥不变。
+ * 返工 R13：用户提问改乐享式浅灰块（首行来源 tag + 问题文字），与主聊天一致。
  */
-export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: Props) {
+export default function DocChatPanel({ kbId, docId, docName, onCitationClick, onCollapse }: Props) {
   // P0-4 第四轮（T6）：信息源状态与主聊天同构；打开文档时默认勾选「当前文档」
   const [source, setSource] = useState<InputSourceValue>({
     docSelected: true,
@@ -72,7 +78,7 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
     setMessages([]);
     sse.setConversationId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source.docSelected, source.kbIds]);
+  }, [source.docSelected, source.kbIds, source.docIds]);
 
   // 流式结束后将 assistant 回复固化进消息列表（同 ChatWindow 收尾模式）
   useEffect(() => {
@@ -89,29 +95,54 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sse.loading]);
 
+  // 返工 R13：信息源快照（DocChatPanel 无库列表，库名用「知识库N」兜底，与侧栏 tags 行一致）
+  const sourceTagNames = (): string[] => {
+    const names: string[] = [];
+    if (source.docSelected) names.push(docName);
+    source.kbIds.forEach((id) => names.push(`知识库${id}`));
+    if (source.docIds.length > 0) names.push(`${source.docIds.length} 个文档`);
+    return names;
+  };
+
   const handleSend = async () => {
     const question = inputValue.trim();
     if (!question || sse.loading) return;
     setInputValue("");
-    setMessages((prev) => [...prev, { role: "user", content: question }]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "user",
+        content: question,
+        sourceTags: sourceTagNames(),
+      },
+    ]);
     await sse.send({
-      // P0-4 第四轮（T6）：当前文档 → doc_scoped 轻流式；勾选库（可多选）→ 库检索链；清空 → 纯直聊
+      // 返工 R10：当前文档 → doc_scoped 轻流式；docIds → multi_scope 合并链；勾选库（可多选）→ 库检索链；清空 → 纯直聊
       knowledgeBaseId: source.docSelected ? kbId : source.kbIds[0] ?? null,
       knowledgeBaseIds: !source.docSelected && source.kbIds.length > 1 ? source.kbIds : undefined,
       documentId: source.docSelected ? docId : undefined,
+      documentIds: !source.docSelected && source.docIds.length > 0 ? source.docIds : undefined,
       question,
-      useHyde: !source.docSelected && source.kbIds.length <= 1 ? useHyde : false,
+      useHyde:
+        !source.docSelected && source.kbIds.length <= 1 && source.docIds.length === 0
+          ? useHyde
+          : false,
       webSearch: useWebSearch,
     });
   };
 
   return (
     <div className={styles.panel}>
-      {/* P0-4 第四轮（T6）：顶部仅「问AI」（信息源交互移输入区；收起按钮在工作台顶栏） */}
+      {/* 返工 R12（v1.5 §12）：header 右上角「关闭」收起面板（对齐乐享：展开态收起入口在面板内） */}
       <div className={styles.header}>
         <Typography.Text strong style={{ fontSize: 13 }}>
           问AI
         </Typography.Text>
+        {onCollapse && (
+          <Tooltip title="关闭">
+            <Button type="text" size="small" icon={<CloseOutlined />} onClick={onCollapse} />
+          </Tooltip>
+        )}
       </div>
 
       <div className={styles.messageList}>
@@ -144,7 +175,17 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
                 )}
               </div>
             ) : (
+              /* 返工 R13：乐享式问题块（首行来源 tag + 问题文字），与主聊天一致 */
               <div className={styles.userBubble}>
+                {msg.sourceTags && msg.sourceTags.length > 0 && (
+                  <div className={styles.userBubbleTags}>
+                    {msg.sourceTags.map((t, i) => (
+                      <span key={i} className={styles.userBubbleTag}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <Typography.Text style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
                   {msg.content}
                 </Typography.Text>
@@ -171,8 +212,8 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
       <div className={styles.inputArea}>
         {/* P0-4 第五轮（T5）：圆角输入容器（与主聊天同款：tags→无边框输入→左下「+」右下圆形发送） */}
         <div className={styles.inputCard}>
-        {/* P0-4 第四轮（T6）：信息源 tags（默认当前文档；× 可移除，清空=直聊） */}
-        {(source.docSelected || source.kbIds.length > 0) && (
+        {/* P0-4 第四轮（T6）：信息源 tags（默认当前文档；× 可移除，清空=直聊）；返工 R10 加 docIds 聚合 tag */}
+        {(source.docSelected || source.kbIds.length > 0 || source.docIds.length > 0) && (
           <div className={styles.sourceTags}>
             {source.docSelected && (
               <Tag
@@ -195,6 +236,15 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
                 知识库{id}
               </Tag>
             ))}
+            {source.docIds.length > 0 && (
+              <Tag
+                closable
+                onClose={() => setSource({ ...source, docIds: [] })}
+                style={{ marginRight: 0 }}
+              >
+                <FileTextOutlined /> {source.docIds.length} 个文档
+              </Tag>
+            )}
           </div>
         )}
         <Input.TextArea
@@ -212,7 +262,7 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
           className={styles.input}
         />
         <div className={styles.inputActions}>
-          {/* 左下角「+」（信息源/深度思考）；DocChatPanel 不开放文档级多选（allowDocScope=false） */}
+          {/* 返工 R10（v1.5 §12）：放开文档级多选（allowDocScope 默认 true，与主聊天同构；docIds 走 multi_scope） */}
           <div className={styles.inputActionsLeft}>
             <InputPlusPopover
               open={composeOpen}
@@ -223,7 +273,6 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
               source={source}
               onSourceChange={setSource}
               activeDoc={{ id: docId, name: docName }}
-              allowDocScope={false}
               useHyde={useHyde}
               onHydeChange={setUseHyde}
               useWebSearch={useWebSearch}

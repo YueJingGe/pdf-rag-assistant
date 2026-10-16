@@ -122,4 +122,4 @@ README 开头加关键词密度高的描述 — GitHub 搜索会索引 README
 - **手动 @ 引用**（你希望 AI 严格对照某份手册时）：如 `@.claude/skills/add-service.md`、`@.claude/agents/code-reviewer.md`、`@docs/rules/50-rag-chain.md`
 - **斜杠命令**：`.claude/skills/*` 目前是普通手册，不注册为斜杠命令；如需斜杠化，后续按 Qoder 原生 skill 格式（SKILL.md + frontmatter）改造
 
-**典型一轮流程**：需求文档 → 你确认 → 基线 commit → 实施（可派子代理，用 agents 模板做 prompt 约束）→ changelog 追加 → （ADR 视情况）→ 收尾 commit。
+**典型一轮流程**：需求文档 → 你确认 → 基线 commit → 实施（可派子代理，用 agents 模板做 prompt 约束）→ changelog 追加 → （ADR 视情况）→收尾 commit。

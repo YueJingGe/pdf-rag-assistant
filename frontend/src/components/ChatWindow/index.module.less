@@ -35,21 +35,42 @@
   display: flex;
 }
 
+/* 返工 R13（v1.5 §12）：用户提问与 AI 同侧左对齐（乐享式形态，不再右对齐） */
 .user {
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .assistant {
   justify-content: flex-start;
 }
 
-/* 用户消息：右侧浅蓝气泡（无头像） */
+/* 用户提问：乐享式浅灰圆角块（首行信息源 tag + 次行问题文字）
+   返工 R26（v1.5 §12）：question 从右侧开始（用户对照乐享批注「question从右侧开始」）+
+   最大宽度限制（批注「设置一个最大宽度」，长问题不占满整行）；消息列表为 flex column，
+   margin-left:auto 右贴 */
 .userBubble {
-  max-width: 70%;
+  width: auto;
+  max-width: 72%;
+  margin-left: auto;
   padding: 10px 14px;
-  border-radius: 12px;
-  background: #e8f3ff;
+  border-radius: 10px;
+  background: #ececee;
   line-height: 1.6;
+}
+
+.userBubbleTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.userBubbleTag {
+  font-size: 12px;
+  color: #4e5460;
+  background: #dfe1e5;
+  border-radius: 4px;
+  padding: 1px 8px;
 }
 
 /* AI 消息：左侧纯文本（无气泡无头像） */
@@ -61,14 +82,129 @@
 .assistantFooter {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* 返工 R19（v1.5 §12）：去 space-between（原把免责/复制/保存拉散到行两端，
+     用户反馈两个 icon 距离过远），改紧凑排列：按钮组在前 + 免责跟随 */
+  gap: 4px;
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid #ebedf0;
 }
 
+/* 返工 R19（v1.5 §12）：乐享式「添加到」文字按钮（icon+文字） */
+.addToBtn {
+  color: #1f2329;
+
+  &:hover {
+    color: #1677ff;
+    background: #f5f6f7;
+  }
+}
+
+/* 返工 R19：免责文案跟随按钮组，不拉伸 */
 .aiDisclaimer {
   font-size: 12px;
+  margin-left: 4px;
+}
+
+/* ---- 返工 R19：乐享式「添加到」弹框（双栏 + 新建文件夹 + 自定义 footer） ---- */
+
+.saveModalFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.saveModalBody {
+  display: flex;
+  height: 320px;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+}
+
+.saveKbPane {
+  display: flex;
+  flex-direction: column;
+  width: 200px;
+  flex-shrink: 0;
+  padding: 8px;
+  overflow-y: auto;
+  border-right: 1px solid #ebedf0;
+}
+
+.savePaneLabel {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.saveKbList {
+  flex: 1;
+}
+
+.saveKbItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+
+  &:hover {
+    background: #f5f6f7;
+  }
+}
+
+.saveKbItemActive {
+  background: #e8f3ff;
+  color: #1677ff;
+}
+
+.saveKbIcon {
+  flex-shrink: 0;
+  color: #1677ff;
+}
+
+.saveKbName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saveCatPane {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.saveCatRoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+
+  &:hover {
+    background: #f5f6f7;
+  }
+}
+
+.saveCatRootActive {
+  background: #e8f3ff;
+}
+
+.saveCatRootHint {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 12px;
+  color: #8f959e;
+}
+
+.saveCatCheck {
+  flex-shrink: 0;
+  color: #1677ff;
 }
 
 .copyBtn {

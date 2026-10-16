@@ -112,31 +112,38 @@ export default function DocumentWorkbench({
           {isOnline && dirty && <Tag color="orange">未保存</Tag>}
           {isOnline && !dirty && !loading && <Tag>已保存</Tag>}
         </Space>
-        {isOnline && (
-          <Button
-            type="primary"
-            size="small"
-            icon={<SaveOutlined />}
-            disabled={!dirty}
-            loading={saving}
-            onClick={handleSave}
-          >
-            保存
-          </Button>
-        )}
-        <Button
-          type={chatCollapsed ? "default" : "primary"}
-          size="small"
-          icon={<RobotOutlined />}
-          onClick={() => setChatCollapsed(!chatCollapsed)}
-        >
-          {chatCollapsed ? "展开问AI" : "收起问AI"}
-        </Button>
-        {onClose && (
-          <Tooltip title="关闭文档，回到问AI">
-            <Button size="small" icon={<CloseOutlined />} onClick={onClose} />
-          </Tooltip>
-        )}
+        {/* 返工 R12（v1.5 §12）：右侧操作组聚拢（保存/问AI/×）；问AI 按钮仅收起态显示（乐享式：展开态收起入口在面板 header 右上角「关闭」） */}
+        <Space size={8}>
+          {isOnline && (
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined />}
+              disabled={!dirty}
+              loading={saving}
+              onClick={handleSave}
+            >
+              保存
+            </Button>
+          )}
+          {chatCollapsed && (
+            <Tooltip title="展开问AI">
+              <Button
+                type="primary"
+                size="small"
+                icon={<RobotOutlined />}
+                onClick={() => setChatCollapsed(false)}
+              >
+                问AI
+              </Button>
+            </Tooltip>
+          )}
+          {onClose && (
+            <Tooltip title="关闭文档，回到问AI">
+              <Button size="small" icon={<CloseOutlined />} onClick={onClose} />
+            </Tooltip>
+          )}
+        </Space>
       </div>
       <div className={styles.body}>
         <div className={styles.contentPane}>
@@ -165,7 +172,7 @@ export default function DocumentWorkbench({
             </div>
           )}
         </div>
-        {/* P0-4 第三轮（T7）：右侧问AI 面板（信息源默认当前文档，可切全部知识） */}
+        {/* P0-4 第三轮（T7）：右侧问AI 面板；返工 R12：onCollapse → 面板 header 右上角「关闭」收起 */}
         {!chatCollapsed && (
           <div className={styles.chatPane}>
             <DocChatPanel
@@ -173,6 +180,7 @@ export default function DocumentWorkbench({
               docId={docId}
               docName={filename}
               onCitationClick={onCitationClick}
+              onCollapse={() => setChatCollapsed(true)}
             />
           </div>
         )}

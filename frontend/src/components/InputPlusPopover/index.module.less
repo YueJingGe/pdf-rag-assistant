@@ -44,13 +44,13 @@
 }
 
 .rowArrow {
-  margin-left: auto;
+  /* 返工 R11（v1.5 §12）：去右推拉满，紧跟标签（乐享式紧凑行） */
   font-size: 11px;
   color: rgba(0, 0, 0, 0.35);
 }
 
 .countBadge {
-  margin-left: auto;
+  /* 返工 R11：去右推拉满，紧跟标签 */
   min-width: 18px;
   height: 18px;
   line-height: 18px;
@@ -65,9 +65,12 @@
 /* 二级：信息源面板 */
 
 .sourcePanel {
-  width: 280px;
+  /* 返工 R20（v1.5 §12）：280→600px——真凶修复：内部 twoPane 宽 560px，原 280px 面板装不下
+     导致横向溢出滚动条（R14 在树内部找错了宿主）；加宽面板 + overflow-x 兕底 */
+  width: 600px;
   max-height: 360px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sourceRow {
@@ -77,11 +80,7 @@
   padding: 8px 10px;
   font-size: 13px;
 
-  :global {
-    .ant-switch {
-      margin-left: auto;
-    }
-  }
+  /* 返工 R9（v1.5 §12）：开关去右推拉满，紧跟标签（乐享式「🌐 全网搜索 [开关]」紧凑形态） */
 }
 
 .sectionTitle {
@@ -125,7 +124,7 @@
 }
 
 .itemCheck {
-  margin-left: auto;
+  /* 返工 R9：✓ 去右推拉满，紧跟标签 */
   color: #1677ff;
   font-size: 13px;
 }
@@ -160,12 +159,13 @@
 
 /* ---- P0-4 第五轮（T6）：两栏知识范围（左库列表 + 右目录树，对齐乐享信息源选择器） ---- */
 /* 返工 R1（v1.5 §12）：固定两栏总宽防 Popover 自适应漂移；treePane 禁横向滚动（节点 ellipsis）+ 细滚动条 */
+/* 返工 R8：twoPane 460→560px（用户反馈「面板要足够宽」），树区净宽约 380px 减少标题截断 */
 
 .twoPane {
   display: flex;
   gap: 8px;
   padding: 4px 6px 6px;
-  width: 460px;
+  width: 560px;
 }
 
 .kbPane {
@@ -292,6 +292,15 @@
       border-radius: 4px;
       max-width: calc(100% - 4px);
       overflow: hidden;
+    }
+
+    /* 返工 R14（v1.5 §12）：antd Tree 虚拟滚动容器自带 overflow:auto，
+       treePane 的 overflow-x:hidden 管不到内部——三层容器全部横向裁剪，
+       彻底消除横向滚动条（配合 Tree virtual={false}） */
+    .ant-tree-list,
+    .ant-tree-list-holder,
+    .ant-tree-list-holder > div {
+      overflow-x: hidden;
     }
   }
 }

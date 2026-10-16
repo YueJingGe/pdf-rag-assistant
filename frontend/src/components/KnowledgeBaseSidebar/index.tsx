@@ -9,7 +9,6 @@ import {
   Dropdown,
   Avatar,
   Tooltip,
-  Popconfirm,
   message,
 } from "antd";
 import {
@@ -25,8 +24,9 @@ import {
   ToolOutlined,
   HistoryOutlined,
   BarChartOutlined,
-  RightOutlined,
+  DownOutlined,
   EllipsisOutlined,
+  MoreOutlined,
 } from "@ant-design/icons";
 import CategoryTree, { type OpenableDoc } from "../CategoryTree";
 import {
@@ -105,6 +105,9 @@ export default function KnowledgeBaseSidebar({
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   // P0-4 第五轮（T3）：历史对话默认收起，标题箭头展开
   const [historyCollapsed, setHistoryCollapsed] = useState(true);
+  // 返工 R26（v1.5 §12）：历史条目「⋮」弹出层——编辑名称（行内 Input，Enter 确认 / Esc 收起）
+  const [editingConvId, setEditingConvId] = useState<number | null>(null);
+  const [editingName, setEditingName] = useState("");
 
   const fetchList = async () => {
     setLoading(true);
@@ -191,6 +194,16 @@ export default function KnowledgeBaseSidebar({
     fetchConversations();
   };
 
+  // 返工 R26（v1.5 §12）：行内编辑确认（Enter 触发；Esc 直接收起不落库）
+  const handleRenameConv = async (convId: number) => {
+    const name = editingName.trim();
+    setEditingConvId(null);
+    if (!name) return;
+    await chatApi.renameConversation(convId, name);
+    message.success("已重命名");
+    fetchConversations();
+  };
+
   return (
     <div className={styles.sidebar}>
       {/* 顶部：库标识区（返工 R2，对齐乐享：点击弹菜单=切换知识库（当前项高亮）/重命名/管理） */}
@@ -229,26 +242,25 @@ export default function KnowledgeBaseSidebar({
         </Dropdown>
       </div>
 
-      {/* P0-4 第五轮（T2）：新建对话按钮（问AI 上方，对齐乐享）；返工 R3：主色实底企业级 */}
-      <div className={styles.nav}>
-        <Button
-          block
-          type="primary"
-          icon={<PlusOutlined />}
-          className={styles.newConvBtn}
-          onClick={handleNewConversation}
-        >
-          新建对话
-        </Button>
-      </div>
+      {/* 返工 R5（v1.5 §12）：通栏「新建对话」按钮删除——入口改「问AI」行右侧 icon（用户反馈按钮太长） */}
 
       {/* 导航项 */}
       <div className={styles.nav}>
+        {/* 返工 R16（v1.5 §12）：点「问AI」= 进入新对话空态页（与「+」一致），历史会话靠历史列表条目切换 */}
         <div
           className={`${styles.navItem} ${chatActive ? styles.navActive : ""}`}
-          onClick={onGoChat}
+          onClick={handleNewConversation}
         >
           <MessageOutlined className={styles.navIcon} /> 问AI
+          <Tooltip title="新建对话">
+            <PlusOutlined
+              className={styles.navNewBtn}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleNewConversation();
+              }}
+            />
+          </Tooltip>
         </div>
         <Tooltip title="P1 敬请期待" placement="right">
           <div className={`${styles.navItem} ${styles.navDisabled}`}>
@@ -278,10 +290,12 @@ export default function KnowledgeBaseSidebar({
           onClick={() => setHistoryCollapsed((v) => !v)}
           role="button"
         >
-          <RightOutlined
+          <HistoryOutlined className={styles.historyTitleIcon} /> 历史对话
+          {/* 返工 R6（v1.5 §12）：折叠箭头 RightOutlined→DownOutlined（收起=▾ 展开=▴，用户反馈） */}
+          {/* 返工 R15（v1.5 §12）：caret 移至行尾，HistoryOutlined 与导航行 icon 左缘对齐（left:18） */}
+          <DownOutlined
             className={`${styles.historyCaret} ${historyCollapsed ? "" : styles.historyCaretOpen}`}
           />
-          <HistoryOutlined /> 历史对话
         </div>
         {!historyCollapsed &&
           (conversations.length === 0 ? (
@@ -298,22 +312,65 @@ export default function KnowledgeBaseSidebar({
               onClick={() => handleSwitchConv(conv.id)}
             >
               <MessageOutlined className={styles.historyIcon} />
-              <span className={styles.historyName} title={conv.title}>
-                {conv.title}
-              </span>
-              <Popconfirm
-                title="删除此对话？"
-                onConfirm={(e) => {
-                  e?.stopPropagation();
-                  handleDeleteConv(conv.id);
+              {/* 返工 R26：编辑名称 = 行内 Input 替换标题（Enter 确认 / Esc 收起），替代 Modal */}
+              {editingConvId === conv.id ? (
+                <Input
+                  size="small"
+                  autoFocus
+                  value={editingName}
+                  onChange={(e) => setEditingName(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  onPressEnter={() => handleRenameConv(conv.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setEditingConvId(null);
+                  }}
+                  className={styles.historyEditInput}
+                />
+              ) : (
+                <span className={styles.historyName} title={conv.title}>
+                  {conv.title}
+                </span>
+              )}
+              {/* 返工 R26：删除钮改乐享式「⋮」弹出层（编辑名称 / 删除对话），替代 Popconfirm */}
+              <Dropdown
+                trigger={["click"]}
+                menu={{
+                  items: [
+                    {
+                      key: "rename",
+                      label: "编辑名称",
+                      icon: <EditOutlined />,
+                      onClick: ({ domEvent }) => {
+                        domEvent.stopPropagation();
+                        setEditingConvId(conv.id);
+                        setEditingName(conv.title);
+                      },
+                    },
+                    {
+                      key: "delete",
+                      label: "删除对话",
+                      icon: <DeleteOutlined />,
+                      danger: true,
+                      onClick: ({ domEvent }) => {
+                        domEvent.stopPropagation();
+                        Modal.confirm({
+                          title: "删除此对话？",
+                          content: conv.title,
+                          okText: "删除",
+                          cancelText: "取消",
+                          okButtonProps: { danger: true },
+                          onOk: () => handleDeleteConv(conv.id),
+                        });
+                      },
+                    },
+                  ],
                 }}
-                onPopupClick={(e) => e.stopPropagation()}
               >
-                <DeleteOutlined
-                  className={styles.historyDelete}
+                <MoreOutlined
+                  className={styles.historyMore}
                   onClick={(e) => e.stopPropagation()}
                 />
-              </Popconfirm>
+              </Dropdown>
             </div>
             ))
           )

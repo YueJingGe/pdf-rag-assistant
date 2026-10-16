@@ -28,20 +28,37 @@
   margin-bottom: 12px;
 }
 
+/* 返工 R13（v1.5 §12）：用户提问与 AI 同侧左对齐（乐享式形态，与主聊天一致） */
 .user {
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .assistant {
   justify-content: flex-start;
 }
 
+/* 用户提问：乐享式浅灰圆角块（首行来源 tag + 问题文字） */
 .userBubble {
-  max-width: 85%;
+  width: 100%;
   padding: 8px 12px;
-  border-radius: 12px;
-  background: #e8f3ff;
+  border-radius: 10px;
+  background: #ececee;
   line-height: 1.6;
+}
+
+.userBubbleTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.userBubbleTag {
+  font-size: 12px;
+  color: #4e5460;
+  background: #dfe1e5;
+  border-radius: 4px;
+  padding: 1px 8px;
 }
 
 .assistantBody {

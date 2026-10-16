@@ -184,6 +184,15 @@ async def delete_conversation(
     await db.commit()
 
 
+async def rename_conversation(
+    db: AsyncSession, conversation_id: int, name: str, user: User
+) -> None:
+    """重命名本人会话标题（P0-4 第五轮返工 R26：历史条目「⋮」→ 编辑名称）。"""
+    conversation = await get_own_conversation(db, conversation_id, user)
+    conversation.title = name.strip()[:500]
+    await db.commit()
+
+
 async def query_rag(
     db: AsyncSession,
     knowledge_base_id: int | None,

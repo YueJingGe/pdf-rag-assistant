@@ -7,6 +7,83 @@
     font-size: 13px;
   }
 
+  /* 返工 R17（v1.5 §12）：缩进 24→16px（浅缩进对齐乐享，antd 该版 TreeProps 无 indent，CSS 控制） */
+  /* 返工 R18：16→20px，恢复层级感（16px 时子行与父行几乎齐平，层级不清晰） */
+  :global(.ant-tree-indent-unit) {
+    width: 20px;
+  }
+
+  /* 返工 R20（v1.5 §12）：switcher 24→16px + margin 2px，收紧箭头-folder 间距
+     （原 24px 宽 + 4px margin，箭头居中后两侧各 7px 空白，用户反馈空隙过大；乐享 ≈4px） */
+  :global(.ant-tree .ant-tree-switcher) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    min-width: 16px;
+    margin-right: 2px;
+    color: #8f959e;
+    font-size: 10px;
+  }
+
+  /* 返工 R20：icon 与文字间距对齐乐享（默认 4px 偏紧） */
+  :global(.ant-tree .ant-tree-iconEle) {
+    margin-right: 6px;
+  }
+
+  /* 返工 R20：padding 2→5px，行高 24→34px 对齐乐享（原特异性/哈希失配未生效，升特异性） */
+  :global(.ant-tree .ant-tree-treenode) {
+    position: relative; /* R25：箭头 absolute 行尾定位基准 */
+    padding: 5px 8px;
+    border-radius: 6px;
+    transition: background 0.15s;
+  }
+
+  :global(.ant-tree .ant-tree-treenode:hover) {
+    background: #f5f6f7;
+  }
+
+  /* 返工 R25（v1.5 §12）：展开/收起箭头统一放行尾（与历史对话 caret 一致，用户指令），
+     folder 从行首开始自然消除箭头-folder 间距；hover 时箭头透明让位给「⋮/+」工具钮，
+     二者不同时显示（非 hover 工具钮本就隐藏） */
+  :global(.ant-tree .ant-tree-switcher) {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    transition: opacity 0.15s;
+  }
+
+  :global(.ant-tree .ant-tree-treenode:hover .ant-tree-switcher) {
+    opacity: 0;
+  }
+
+  /* 返工 R20（v1.5 §12）：content-wrapper 设为 flex 并占满行宽剩余空间——
+     根治长文件名硬截断无省略号 bug（antd 该节点默认非 flex，nodeTitle 的 flex:1 失效，
+     内容把行撑溢出被 overflow 硬截） */
+  :global(.ant-tree .ant-tree-node-content-wrapper) {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* 返工 R28（v1.5 §12）：溢出真凶是中间层 span.ant-tree-title（content-wrapper 与自定义
+     nodeTitle 之间）未设 flex——实测 wrapper 235px 被 title 349px 内容撑穿（label 325 不压缩），
+     ellipsis 链路断在这一环；补上 flex:1 + min-width:0 让 title 可被压缩，
+     底部横向滚动条（treeWrap sw 408）同根消除 */
+  :global(.ant-tree .ant-tree-title) {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* 返工 R23（v1.5 §12）：屏蔽 antd content-wrapper 自带 hover 灰底——
+     与 treenode 整行 hover 背景叠加错位成两层阴影（用户反馈「阴影有两层」）；只保留整行一层 */
+  :global(.ant-tree .ant-tree-node-content-wrapper:hover) {
+    background: transparent;
+  }
+
   :global(.ant-tree-node-content-wrapper) {
     display: inline-flex;
     align-items: center;
@@ -19,14 +96,22 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 8px;
+  /* 返工 R15（v1.5 §12）：左 padding 8→14，AppstoreOutlined 左缘对齐导航行 icon（left:18） */
+  padding: 2px 8px 2px 14px;
   margin-bottom: 2px;
 }
 
+/* 返工 R7（v1.5 §12）：「目录」标题行规格与侧栏导航行统一（14px #1f2329 / icon 16px #646a73） */
 .treeHeaderTitle {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  color: #333;
+  color: #1f2329;
+}
+
+.treeHeaderIcon {
+  font-size: 16px;
+  color: #646a73;
+  margin-right: 6px;
 }
 
 .headerActions {
@@ -60,23 +145,34 @@
   align-items: center;
   min-width: 0;
   max-width: 100%;
+  /* 返工 R17：占满行宽，工具钮推至行尾（乐享式） */
+  flex: 1;
 }
 
 .nodeLabel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 150px;
+  /* 返工 R17：占剩余宽度，长名 ellipsis，短名后空位归工具钮；原 max-width 150 与 flex 冲突移除 */
+  flex: 1;
+  min-width: 0;
   cursor: pointer;
+  /* 返工 R27（v1.5 §12）：字色与历史条目统一 #1f2329（antd 默认 rgba(0,0,0,.88) 有色差） */
+  color: #1f2329;
 }
 
-/* P0-4 第四轮（T5）：打开文档选中态（乐享蓝底）；负 margin 抵消 padding 不占额外宽度 */
+/* 返工 R27/R29（v1.5 §12）：树选中态与导航/历史选中 token 完全统一——
+   文字蓝字 600（nodeLabelActive）+ nodeTitle 色块 #e8f3ff（nodeTitle flex:1 占满行内容区，
+   视觉接近整行高亮）。注：曾试 :has 与 antd TreeNode className 透传两条路，
+   实测规则存在/类匹配但 computed 不应用（浏览器怪癖），自定义 span 路径已验证生效 */
 .nodeLabelActive {
-  background: #e6f4ff;
   color: #1677ff;
-  border-radius: 4px;
-  padding: 1px 4px;
-  margin: -1px -4px;
+  font-weight: 600;
+}
+
+.nodeTitleActive {
+  background: #e8f3ff;
+  border-radius: 6px;
 }
 
 .nodeStatus {
@@ -86,24 +182,62 @@
 }
 
 /* P0-4 第三轮：opacity + pointer-events 方案（替代 visibility，hover 更稳、元素始终占位） */
+/* 返工 R17：文档行「⋮」改竖三点 icon（MoreOutlined，对齐乐享）；目录行双钮见 nodeTools/nodeTool */
 .nodeMore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   margin-left: 6px;
-  padding: 0 4px;
-  color: #999;
+  color: #8f959e;
   border-radius: 4px;
-  letter-spacing: 1px;
-  font-weight: 600;
+  font-size: 12px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s;
 
   &:hover {
     background: #f0f0f0;
-    color: #333;
+    color: #1677ff;
   }
 }
 
 .container :global(.ant-tree-treenode:hover) .nodeMore {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* 返工 R17（v1.5 §12）：目录行乐享式双工具钮容器（⋮ 更多操作 / + 新建），hover 行时浮现 */
+.nodeTools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.container :global(.ant-tree-treenode:hover) .nodeTools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nodeTool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  color: #8f959e;
+  font-size: 12px;
+  transition: all 0.15s;
+
+  &:hover {
+    background: #f0f0f0;
+    color: #1677ff;
+  }
 }

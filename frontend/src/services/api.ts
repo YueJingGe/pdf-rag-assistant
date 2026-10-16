@@ -248,6 +248,9 @@ export const chatApi = {
     api.get<ChatMessage[]>(`/chat/messages/${conversationId}`),
   deleteConversation: (conversationId: number) =>
     api.delete(`/chat/conversations/${conversationId}`),
+  // 返工 R26（v1.5 §12）：历史条目「⋮」弹出层 → 编辑名称
+  renameConversation: (conversationId: number, name: string) =>
+    api.patch<{ detail: string }>(`/chat/conversations/${conversationId}`, { name }),
   uploadFile: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);

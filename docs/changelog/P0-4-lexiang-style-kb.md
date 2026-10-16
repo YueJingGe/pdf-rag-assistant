@@ -1,6 +1,294 @@
 # P0-4 乐享式知识库最小 demo — changelog
 
-> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8；v1.2 增补第三轮 §9；v1.3 增补第四轮 §10；v1.4 增补第五轮 §11；v1.5 增补第五轮返工 §12）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）/ `0b76011`（第三轮）/ `39745f9`（第四轮）/ `5db38d1`（第五轮）/ `1c47e0c`（第五轮返工）
+> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8；v1.2 增补第三轮 §9；v1.3 增补第四轮 §10；v1.4 增补第五轮 §11；v1.5 增补第五轮返工 §12）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）/ `0b76011`（第三轮）/ `39745f9`（第四轮）/ `5db38d1`（第五轮）/ `1c47e0c`（第五轮返工 R1-R4）/ `4e5985f`（第五轮返工 R5-R13）
+
+## 第五轮返工第九批 R26-R29：question 右对齐/⋮弹出层与重命名端点/字号字色选中态 token 统一/树行溢出省略号根治（2026-10-16）
+
+用户四条批注：question 样式不对应从右侧开始且限最大宽、历史对话缺「编辑名称/删除对话」弹出层、字号/选中态应全局统一（「完整项目风格要一致」）、长文档名超出省略号+底部横向滚动条、「有的文字加粗有的不加粗」。基线延续 `4e5985f`。**本轮含一个后端小端点（会话重命名），其余纯前端；禁区五文件 diff 为空，零新增 LLM 调用。**
+
+### 改动清单
+
+| 文件 | 内容 |
+|---|---|
+| `frontend/src/components/ChatWindow/index.module.less` | R26：userBubble 右对齐（margin-left:auto）+ max-width 72% |
+| `frontend/src/components/KnowledgeBaseSidebar/index.tsx` | R26：历史条目 Popconfirm 删除钮 → 乐享式「⋮」Dropdown（编辑名称/删除对话）；行内编辑 Input（Enter 确认/Esc 收起）；删除改 Modal.confirm 二次确认 |
+| `frontend/src/components/KnowledgeBaseSidebar/index.module.less` | R26：historyDelete → historyMore（灰 ⋮ hover 浮现）+ historyEditInput |
+| `frontend/src/services/api.ts` | R26：chatApi.renameConversation（PATCH） |
+| `backend/app/api/chat.py` | R26：PATCH /conversations/{id}（ConversationRenameRequest，空名校验 422） |
+| `backend/app/services/chat_service.py` | R26：rename_conversation（get_own_conversation 归属校验 + commit） |
+| `frontend/src/components/CategoryTree/index.module.less` | R27/R28/R29：.ant-tree-title 补 flex 链（溢出根治）；nodeLabel 字色 #1f2329；nodeLabelActive 蓝字 600 + nodeTitleActive #e8f3ff 色块 |
+| `frontend/src/components/CategoryTree/index.tsx` | R27/R29：nodeTitle 挂 nodeTitleActive（选中态 token 统一） |
+
+### 验收（刷新后 DOM/接口实测）
+
+| 项 | 结果 |
+|---|---|
+| R26 question 右对齐 | 贴右缘 gapRight=0、max-width 72%、#ececee ✅ |
+| R26 ⋮ 弹出层 | 菜单「编辑名称/删除对话」→ 行内 Input → Enter → PATCH 落库 → 列表刷新显示新名 ✅（改名已还原数据） |
+| R26 rename 端点 | 无 token PATCH=401 ✅；后端已重启生效 ✅ |
+| R27 字号/字色 | 历史 13px = 树 13px；树字色 #1f2329 与历史一致 ✅ |
+| R27 选中态统一 | 树选中 #e8f3ff + #1677ff + 600，与导航/历史 token 一致 ✅ |
+| R28 溢出根治 | 长名 label 压缩 165px + ellipsis 生效；treeWrap sw=cw=279（原 408>279）横向滚动条消失 ✅ |
+| R29 加粗统一 | 树选中 600 与历史一致 ✅ |
+| 类型/编译 | tsc exit=0、py_compile OK ✅ |
+
+### 遇到的问题
+
+- **ellipsis 链路断点定位**：R20 只修 content-wrapper，漏了 antd 中间层 span.ant-tree-title——元素级测量（wrapper 235 / title 349 / label 325 不压缩）才找到真断点；补 `.ant-tree-title { flex:1; min-width:0 }` 根治
+- **整行选中底色两条路失效**：:has 与 antd TreeNode data className（规则存在/类匹配/无覆盖/无内联/sheet 启用，但 computed 不应用，疑似浏览器怪癖）——第三方案 nodeTitle 自定义 span（nodeLabel 600 同路径已验证生效）落地；教训：antd 树行级样式优先走 titleRender 自定义元素
+- **误杀后端进程**：重启时 `uvicorn` 脚本 shebang 指向无依赖的 homebrew python3.10（ModuleNotFoundError sqlalchemy），正确方式 `python3 -m uvicorn`（/usr/bin/python3 有依赖）——已恢复并记录
+- **CSSOM 检测脚本 bug**：新 Chrome 的 CSSStyleRule 也有 cssRules（空列表 truthy），walk 递归会跳过所有规则——检测需 instanceof CSSStyleRule 判断
+
+### 遗留事项（P1）
+
+- R26 删除对话 Modal.confirm 交互真实删除链路待用户复验；沿袭：R19 弹框新建文件夹真实创建、历史旧消息 sourceTags 回填、暗色模式、移动端适配
+
+## 第五轮返工第八批 R25：目录树展开箭头统一移行尾（2026-10-16）
+
+用户批注「箭头明显没有缩紧」「一级二级目录分不清楚」「展开收起箭头统一放右侧，和历史对话一样」。基线延续 `4e5985f`。**纯前端改动（1 文件），后端 diff 为空，禁区五文件 diff 为空，零新增 LLM 调用。**
+
+### 改动与验收
+
+| 项 | 内容 |
+|---|---|
+| `frontend/src/components/CategoryTree/index.module.less` | switcher 改 absolute 行尾（right 10px + translateY 垂直居中）+ opacity 过渡；treenode relative + padding 左右 8px；新增 hover 时箭头 opacity 0（让位给「⋮/+」工具钮） |
+| 验收（刷新后 DOM） | switcher absolute right=12px 垂直居中 ✅；folder 行首 left=20、folder→文字 gap 6px ✅；文档行相对缩进 20px 层级清晰 ✅；行高 34px 保持 ✅；hover 让位两条规则同容器 hash 命中 ✅（CSS :hover 伪类无法 dispatch 触发，规则注入断言替代） |
+| 设计说明 | 箭头移行尾后 folder 从行首起步，箭头-folder 间距问题自然消解；hover 时箭头透明与工具钮同区互换（非 hover 工具钮本就隐藏），不同时显示无重叠 |
+
+### 遇到的问题
+
+- CSS `:hover` 伪类无法用 dispatchEvent 触发（仅真实鼠标），交互级验证以「规则注入 + 容器 hash 一致 + 特异性压过」断言替代，视觉效果待用户真实浏览器复验
+
+### 遗留事项（P1）
+
+- R25 hover 互换与视觉待用户复验；沿袭：R19 弹框新建文件夹真实创建链路、历史旧消息 sourceTags 回填、暗色模式、移动端适配
+
+## 第五轮返工第七批 R21-R24：历史条目层级缩进/信息源级联勾选/双层阴影/弹框交互打磨（2026-10-16）
+
+用户连续四条批注：①「历史对话怎么没有层级之分」（条目应比标题缩进）；②「你没有级联的概念么，最上层都选上了，为什么下层的还是空的」（信息源勾库后右栏树全空）；③「你没发现你阴影有两层么」（目录行 hover 双层灰底叠加错位）；④「没有收起和取消啊」+ 预览裸露 markdown 源码（你真应该去学下好的交互设计）。基线延续 `4e5985f`。**纯前端改动（4 文件），后端 diff 为空，禁区五文件 diff 为空，零新增 LLM 调用。**
+
+### 改动文件清单
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/KnowledgeBaseSidebar/index.module.less` | R21：historyItem 左内边距 10→30px（条目相对标题缩进 20px） |
+| `frontend/src/components/InputPlusPopover/index.tsx` | R22：级联勾选——treeCheckedKeys 整库时级联返回全部 doc-*；handleTreeCheck 双向转换（勾满升级整库 / 部分降级文档级）；kbPartial 半选态 + Checkbox indeterminate |
+| `frontend/src/components/CategoryTree/index.module.less` | R23：content-wrapper:hover transparent（屏蔽 antd 自带灰底与整行 hover 叠加） |
+| `frontend/src/components/ChatWindow/index.tsx` | R24：新建文件夹编辑态补取消按钮 + Esc 收起；预览区改 ReactMarkdown 渲染（maxHeight 140 滚动） |
+
+### 验收结果（整页刷新后 DOM 实测，含真实交互序列）
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | R21：标题 icon left=18 / 条目 icon left=38（缩进 20px） | ✅ |
+| 2 | R22 正向：勾库 → 树 6 勾；取消库 → 树清零 | ✅ |
+| 3 | R22 反向：取消一个文档 → 树级联取消 + 左栏库变 indeterminate 半选 | ✅ |
+| 4 | R23：wrapper:hover transparent 规则命中，hover 仅一层背景 | ✅ |
+| 5 | R24：编辑态取消按钮点击收起回「+ 新建文件夹」；预览 ReactMarkdown 渲染（无星号井号源码） | ✅ |
+| 6 | 质量门 | ✅ tsc 零错误；后端零改动；禁区五文件 diff 空 |
+
+### 遇到的问题
+
+1. **antd 两字按钮自动插空格**：「取消」textContent 实为「取 消」，精确匹配失败 → 归一化后匹配（三字及以上无此问题）
+2. **JSX 注释内禁写星号斜杠序列**：注释里的 markdown 示例被解析为注释提前闭合（tsc「无效的字符」），改文字描述规避
+3. **级联与整库语义的融合**：勾库清 docIds 是后端整库优先语义（保留），视觉级联由 treeCheckedKeys 承担；树上勾满自动升级整库（无文档上限）、部分选择降级 docIds 承接——状态机闭环且与后端 multi_scope_retrieve 语义一致
+
+### 遗留事项（P1）
+
+- R21-R24 视觉待用户复验；沿袭：历史旧消息 sourceTags 回填、暗色模式、移动端适配
+
+## 第五轮返工第六批 R19-R20：回答 footer 乐享化/「添加到」弹框 + 目录树与弹层系统性间距修复（2026-10-16）
+
+用户连续两条批评：①「两个 icon 距离这么远干嘛，参考这里的添加到和复制，以及添加到有一个弹框的交互」（footer 拉散 + 乐享弹框对照四图）；②「你看间距啊，不要我说哪里你就看哪里」「面板太窄了啊，内容过宽了啊」（目录树箭头-folder 大空隙 + 长文件名硬截断 + 信息源弹层滚动条复现）。基线延续 `4e5985f`。**纯前端改动（6 文件），后端 diff 为空，禁区五文件 diff 为空，零新增 LLM 调用。**
+
+### 改动文件清单
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/ChatWindow/index.tsx` | R19：footer 重排「[添加到][复制]免责」紧凑排列，存文档 icon 钮→乐享式「添加到」文字按钮；弹框重写：宽 640、标题+副标题、左 KB 列表+右目录树（根行「知识库一级目录 ✓」）、底部「+ 新建文件夹」行内交互（categoryApi.create→刷新树）、取消/确认；新增 saveNewCat* 三 state + handleCreateCatFolder；KnowledgeOutlined 不存在于该版 icons → AppstoreOutlined |
+| `frontend/src/components/ChatWindow/index.module.less` | R19：assistantFooter 去 space-between 改 gap 4px；新增 addToBtn/saveModal* 全套双栏样式 |
+| `frontend/src/components/CategoryTree/index.module.less` | R20：① switcher 24→16px+margin 2px（箭头-folder 视觉间距 12→≈5px）；② 行高 28→34px（treenode padding 5px，升特异性）；③ content-wrapper 设 flex+min-width:0 根治长文件名硬截断（antd 默认非 flex，nodeTitle flex:1 失效） |
+| `frontend/src/components/InputPlusPopover/index.module.less` | R20：**滚动条真凶**——sourcePanel 280px 装不下内部 560px twoPane；面板 280→600px + overflow-x:hidden 兕底（R14 在树内部找错宿主） |
+
+### 验收结果（整页刷新后 DOM 实测，含真实开弹层/开弹框）
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | 目录树：switcher 宽 16px / 箭头-folder 间距 ≈5px / 行高 34px | ✅ |
+| 2 | 目录树：wrapper flex 生效，长文件名 ellipsis 机制就位（无硬截断） | ✅ |
+| 3 | 信息源弹层：真实 dispatch 序列开弹层，sourcePanel 600px、全链路 overflowX=0、页面无横向溢出 | ✅ |
+| 4 | footer：添加到→复制 gap 4px、复制→免责 8px（原 space-between 拉散） | ✅ |
+| 5 | 添加到弹框：640 宽、标题+副标题、左 KB 列表（选中态）+ 右目录树 + 根行「知识库一级目录」、新建文件夹可用 | ✅ |
+| 6 | 质量门 | ✅ tsc 零错误；后端零改动；禁区五文件 diff 空 |
+
+### 遇到的问题
+
+1. **信息源滚动条宿主两轮找错（R1/R14）后的真凶**：R14 在树内部找，本轮沿容器链自上而下量 scrollWidth 才发现宿主是外层 sourcePanel（280px < 内容 560px）。教训：滚动条排查必须沿滚动容器链自上而下，不能只查目标组件内部
+2. **长文件名硬截断根因**：antd `.ant-tree-node-content-wrapper` 默认非 flex，我们自定义的 nodeTitle（flex:1+min-width:0）从未生效，内容撑溢出被硬截——修复 wrapper 设 flex 后 ellipsis 才真正工作
+3. **CDP 输入受限下的 React 事件触发**：受控 Popover（open 由父控制）+ hover 二级弹层，CDP click/hover 超时；用 dispatchEvent 完整序列（pointerdown→mousedown→pointerup→mouseup→click）开主弹层成功；二级 hover 需带 relatedTarget 的 mouseover（React onMouseEnter 模拟依赖 from/to 路径）
+4. **KnowledgeOutlined**：该版 @ant-design/icons 无此导出，改用项目已验证的 AppstoreOutlined
+
+### 遗留事项（P1）
+
+- R19 弹框「新建文件夹」真实创建链路、R20 视觉待用户复验；沿袭：R17 菜单交互实测、历史旧消息 sourceTags 回填、暗色模式、移动端适配
+
+## 第五轮返工第五批 R18：目录树视觉二次对齐——箭头形态/层级缩进/间距（2026-10-16）
+
+用户否定 R17（「这样式哪里一样了，你实现的」+ 前后对照截图）。根因：R17 只调了缩进宽度，漏掉三处最显眼差异——① 箭头形态（antd 默认实心黑三角 vs 乐享灰色细线 chevron ∨/＞）② 16px 缩进层级感丢失 ③ icon-文字间距 4px 偏紧。基线延续 `4e5985f`。**纯前端改动（2 文件），后端 diff 为空，禁区五文件 diff 为空，零新增 LLM 调用。**
+
+### 改动文件清单
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/CategoryTree/index.tsx` | Tree 加 `switcherIcon={<DownOutlined />}`（细线 chevron，展开 ∨ / 收起 antd 自动 rotate -90° 成 ＞；注释放 props 间/三元分支内均非法，最终置于条件表达式前） |
+| `frontend/src/components/CategoryTree/index.module.less` | ① `.ant-tree .ant-tree-switcher` 色灰 #8f959e/10px（选择器加 .ant-tree 一层压 antd 特异性）；② 缩进 16→20px 恢复层级感；③ `.ant-tree-iconEle` margin-right 6px；④ treenode 行 padding 2px + border-radius 6px + hover 浅灰 #f5f6f7 整行反馈 |
+
+### 验收结果（页面刷新后 DOM 断言）
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | 箭头形态 | ✅ switcher icon = anticon-down（细线 chevron），色 rgb(143,149,158)=#8f959e，10px |
+| 2 | 层级缩进 | ✅ indent-unit 20px |
+| 3 | icon-文字间距 | ✅ iconEle margin-right 6px |
+| 4 | 类型色保持 | ✅ PDF rgb(230,69,69) 红 / folder rgb(250,173,20) 金 |
+| 5 | 质量门 | ✅ tsc -b 零错误；后端零改动；禁区五文件 diff 空 |
+
+### 遇到的问题
+
+1. **CSS module HMR 哈希失配（新坑）**：less 改动后新样式表（新哈希 `12fni`）已注入 document.styleSheets，但 DOM 上组件 className 还挂旧哈希（`19qm5`）——新规则全部不命中、computed 值不变（验证脚本显示规则存在却不生效的假象）；navigate reload 整页重挂载后命中。教训：CSS module 类名哈希随内容变化，HMR 热换样式不换 DOM 类名，改 less 后断言前必须整页刷新
+2. **JSX 注释位置三连错**：props 之间、三元分支 `) : (` 与元素之间均不能放 `{/* */}`（tsc 报「应为...」/「应为)」），最终注释置于条件表达式前（JSX 子元素位）；期间 LSP 报「运算符<不能应用」为中间态缓存，tsc exit=0 为准
+3. **antd 规则覆盖**：`.ant-tree-switcher` 单层选择器与 antd `:where(...).ant-tree .ant-tree-switcher` 同特异性时后加载的 antd 胜 → 加 `.ant-tree` 层至 (0,3,0) 压过
+
+### 遗留事项（P1）
+
+- R18 视觉待用户真实浏览器复验（收起态 ＞ 旋转需点击目录收起后观察）；沿袭：R17 菜单交互实测、R14 弹层 scrollWidth 断言、R10/R12 交互级实测、历史旧消息 sourceTags 回填、历史对话空态、暗色模式、移动端适配
+
+## 第五轮返工第四批 R17：目录树一比一还原乐享（2026-10-16）
+
+R16 后用户带 4 张乐享对照截图反馈「目录样式和腾讯乐享保持一致，一比一还原哦」。按需求 §12 R17 实施，基线延续 `4e5985f`。**纯前端改动（2 文件），后端 diff 为空，禁区五文件 diff 为空，零新增 LLM 调用。**
+
+### 改动文件清单
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/CategoryTree/index.tsx` | ① 目录行单一「···」菜单 → 乐享式双工具钮「⋮ 更多操作」(重命名/删除) +「+ 新建」(新建文档/新建子目录/上传文件挂该目录)，hover 浮现行尾对齐；② 文档 icon 按扩展名着色（PDF 红 #e64545 / Word 蓝 #2b7cd3 / 在线 MD 绿 / 其他灰）；③ folder #1677ff→#faad14 金色；④ 文档行「···」文本改 MoreOutlined 竖三点；⑤ 上传升级：uploadCategoryId state，UploadModal categoryId 由固定根改动态（目录行上传挂该目录） |
+| `frontend/src/components/CategoryTree/index.module.less` | ① `.ant-tree-indent-unit` 24→16px 浅缩进；② nodeTitle/nodeLabel flex 化（label 占剩余宽度、工具钮行尾、max-width 150 移除）；③ 新增 .nodeTools（hover 浮现容器）/.nodeTool（18px icon 钮 #8f959e hover 蓝）；④ nodeMore 文本三点改 icon 钮样式 |
+
+### 关键设计摘要
+
+- **antd 该版 TreeProps 无 indent 属性**：缩进改 CSS `.ant-tree-indent-unit{width:16px}`（版本无关更稳）；乐享子级缩进约一组箭头+icon 宽，16px 视觉贴近
+- **菜单按项目能力裁剪**：乐享 ⋮ 菜单的新标签页/复制链接/收藏/快速访问/复制到/移动到、+菜单的智能文档/智能表格/模板/引用知识/上传文件夹/Figma/导入均不做——与第三轮用户批注「保留重命名删除即可」一致；+菜单「上传文件」升级为可挂该目录（原只能挂根）
+- **行尾对齐链**：nodeTitle flex:1 + nodeLabel flex:1(min-width:0) + nodeTools flex-shrink:0 → 长名 ellipsis、短名空位归工具钮（blockNode 拉伸下与侧栏头部行对齐）
+
+### 验收结果
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | 浅缩进 | ✅ DOM 断言 indent-unit width 16px；CSSOM 规则注入 |
+| 2 | folder 金色 | ✅ rgb(250,173,20)=#faad14 |
+| 3 | PDF 红色 icon | ✅ anticon-file-pdf 存在，color rgb(230,69,69)=#e64545 |
+| 4 | 目录行双工具钮 | ✅ nodeTools ×3（三个目录行各一组）已挂载，hover 浮现 CSS 规则注入 |
+| 5 | 质量门 | ✅ tsc -b 零错误；后端零改动；禁区五文件 diff 空 |
+
+### 遇到的问题
+
+1. **TreeProps 无 indent**：先写 `indent={16}` 报 TS 错（antd 该版 TreeProps 不含 indent）→ 改 CSS indent-unit 方案，一次通过
+2. **hover 态断言受限**：nodeTools 默认 opacity:0，CDP hover 受视口隐藏限制不稳定——验证采用「DOM 结构存在 + CSSOM 规则注入」双断言，hover 视觉由用户真实浏览器复验
+
+### 遗留事项（P1）
+
+- R17 菜单交互（⋮/+ 点击弹菜单、上传挂目录全链路）待用户实测；沿袭：R14 弹层 scrollWidth 断言、R10/R12 交互级实测、历史旧消息 sourceTags 回填、历史对话空态、暗色模式、移动端适配
+
+## 第五轮返工第三批 R14-R16：弹层滚动条根治 + 侧栏 icon 对齐 + 问AI入口新建对话（2026-10-16）
+
+R5-R13 交付后用户实测再反馈三条（带截图）：①信息源弹层底部仍现深色粗横向滚动条（R8 加宽后未根除）②侧栏各行 icon 左缘参差（R7 规格统一后未对齐）③点「问AI」进入的是历史会话页而非新对话空态页。按需求 §12 追加 R14-R16 实施，基线延续 `4e5985f`。**纯前端改动（5 文件），后端 diff 为空，禁区五文件 diff 为空，零新增 LLM 调用。**
+
+### 改动文件清单
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/InputPlusPopover/index.tsx` | R14：目录 Tree 加 `virtual={false}`（节点量级小，消除虚拟滚动容器变量） |
+| `frontend/src/components/InputPlusPopover/index.module.less` | R14：sourceTree `:global` 对 `.ant-tree-list` / `.ant-tree-list-holder` / `.ant-tree-list-holder > div` 三层容器 `overflow-x:hidden` 兜底 |
+| `frontend/src/components/KnowledgeBaseSidebar/index.tsx` | R15：历史行 caret 移至行尾（HistoryOutlined 先、文案、caret 后）；R16：「问AI」行 onClick onGoChat→handleNewConversation（点行即新对话空态页，与「+」一致） |
+| `frontend/src/components/KnowledgeBaseSidebar/index.module.less` | R15：.historyCaret 加 margin-left:auto、10→12px |
+| `frontend/src/components/CategoryTree/index.module.less` | R15：.treeHeader padding `2px 8px` → `2px 8px 2px 14px` |
+
+### 关键设计摘要
+
+- **R14 根因是滚动条宿主错判**：R1/R8 两次只约束了 treePane 外层，但深色粗条实际来自内部 antd Tree 虚拟滚动容器 `.ant-tree-list-holder`（自带 overflow:auto、antd 默认滚动条样式，与自定 6px 细条外观明显不同）——外层 hidden 管不到内部容器；双保险 = 关虚拟滚动 + 三层容器逐层裁剪
+- **R15 对齐基准线 left:18**：navItem padding-left 10 + 侧栏容器偏移 8；目录标题差 6px（treeHeader padding 8）→ 14；历史行 caret 前置占位 18px → caret 右置（margin-left:auto），主 icon/文案列全部回归基准线，折叠语义不变（▾/▴）
+- **R16 入口语义统一**：「问AI」行 = 新对话入口（乐享行为：点导航即开新对话），不再恢复上次活跃会话；历史会话消费路径唯一化（历史列表条目）；复用既有 p04:conv-new 事件总线，零新状态
+
+### 验收结果
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | R15 历史行 icon 对齐 | ✅ DOM 断言 HistoryOutlined left:36→18；caret 行尾 left:249（margin-left:auto 生效） |
+| 2 | R15 目录 icon 对齐 | ✅ DOM 断言 left:12→18；CSSOM `padding: 2px 8px 2px 14px` |
+| 3 | R14 Tree 三层拦截 | ✅ CSSOM 注入 `._sourceTree .ant-tree-list/.ant-tree-list-holder/>div { overflow-x:hidden }` |
+| 4 | R16 问AI 新对话 | ✅ 行为断言：点击后主区域显示空态文案「今天从哪里开始」、无 userBubble/assistantBody 元素 |
+| 5 | 质量门 | ✅ tsc -b 零错误；后端零改动；禁区五文件 diff 空 |
+
+### 遇到的问题
+
+1. **两轮返工未根治同一滚动条 = 根因从未被实测定位**：R1（外层 overflow-x:hidden）与 R8（加宽 560px）都基于「宿主是 treePane」的猜测，本轮才通过「滚动条外观（深色粗条 vs 自定细条）+ antd Tree 结构」锁定真宿主为内部虚拟滚动容器——教训：返工修复必须先定位到元素级证据（外观特征/DOM 实测），否则样式断言（treePane hidden ✅）全绿也可能没修到点上
+2. **弹层交互级 DOM 实测受阻**：二级弹层为 trigger=hover 嵌套 Popover，CDP 合成事件（dispatchEvent mouseover/mouseenter）与 hover 工具均未触发；本轮验证依赖 CSSOM 规则注入断言 + 用户真实浏览器复验（验收标准 15 的 scrollWidth 断言待弹层可开时补）
+
+### 遗留事项（P1）
+
+- R14 验收标准 15 的弹层打开态 scrollWidth 断言待用户实测复验（CDP hover 触发受限）
+- 沿袭：R10/R12 交互级实测、历史旧消息 sourceTags 回填、历史对话空态、暗色模式、移动端适配
+
+## 第五轮返工第二批 R5-R13：侧栏规格统一 + 弹层紧凑加宽 + 工作台多选文档 + 问AI入口切换 + 问题块对齐乐享（2026-10-16）
+
+用户实测反馈九条（R5-R7/R8/R9/R10/R11/R12/R13 分七批，多为带截图批注，含乐享对照图）：侧栏交互细节、弹层空间、工作台能力与主聊天一致性。按需求 §12 追加条目实施，基线 commit `4e5985f`。**纯前端改动（9 文件），后端 `backend/` 全量 diff 为空，RAG 禁区五文件 diff 为空，全程零新增 LLM 调用。**
+
+### 改动文件清单（全部前端）
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/KnowledgeBaseSidebar/index.tsx` | R5：删通栏「+新建对话」按钮，改「问AI」导航行右侧 PlusOutlined icon（stopPropagation 防误触导航）；R6：历史折叠箭头 RightOutlined+rotate(90) → DownOutlined（收起 ▾ / 展开 rotate(-180deg) ▴）；R7：HistoryOutlined 加 historyTitleIcon 类 |
+| `frontend/src/components/KnowledgeBaseSidebar/index.module.less` | R5：删 .newConvBtn，加 .navNewBtn（margin-left:auto + 14px + #8f959e，hover #1677ff）；R6：.historyCaretOpen rotate(-180deg)；R7：.historyTitle 14px/#1f2329/padding 8px 10px（对齐问AI 行），加 .historyTitleIcon 16px/#646a73 |
+| `frontend/src/components/CategoryTree/index.tsx` | R7：AppstoreOutlined inline style 改 treeHeaderIcon 类（与侧栏同源规格） |
+| `frontend/src/components/CategoryTree/index.module.less` | R7：.treeHeaderTitle 13px/#333 → 14px/#1f2329；加 .treeHeaderIcon 16px/#646a73 |
+| `frontend/src/components/InputPlusPopover/index.module.less` | R8：twoPane 460→560px（消除横向滚动条）；R9：.rowArrow/.itemCheck 删 margin-left:auto（✓/→ 紧跟标签不再右推拉满）；.sourceRow 删 ant-switch margin 规则（全网搜索开关紧跟文案）；R11：.countBadge 删 margin-left:auto |
+| `frontend/src/components/ChatWindow/index.tsx` | R13：MessageItem 加 sourceTags?: string[]；新增 sourceTagNames() 快照 helper（docSelected→「当前文档」、kbIds→库名、docIds→「N 个文档」）；handleSend 写入用户消息；userBubble 渲染首行 tag 块 |
+| `frontend/src/components/ChatWindow/index.module.less` | R13：.user flex-end→flex-start（用户提问与 AI 同侧左对齐）；.userBubble max-width 70%/#e8f3ff/radius 12px → width 100%/#ececee/radius 10px（乐享式浅灰块）；加 .userBubbleTags/.userBubbleTag（12px/#4e5460/#dfe1e5） |
+| `frontend/src/components/DocChatPanel/index.tsx` | R10：删 `allowDocScope={false}`（信息源弹层与主聊天同构，支持文档级多选，docIds 走 multi_scope）；handleSend 加 documentIds + useHyde 加 `docIds.length===0` 条件；sourceTags 区加 docIds 聚合 tag；useEffect 依赖加 source.docIds；R12：Props 加 onCollapse、header 右上角关闭按钮；R13：MsgItem 加 sourceTags + sourceTagNames() + userBubble tag 行 |
+| `frontend/src/components/DocChatPanel/index.module.less` | R13：.user flex-start；.userBubble 同主聊天款（100%/#ececee/10px）+ userBubbleTags/userBubbleTag |
+| `frontend/src/components/DocumentWorkbench/index.tsx` | R12：右侧操作组包 Space size=8（保存+问AI+× 聚拢）；「问AI」按钮仅 chatCollapsed 时渲染（primary 小按钮），删除原「展开/收起」双态按钮；DocChatPanel 传 `onCollapse={() => setChatCollapsed(true)}` |
+| `docs/requirements/P0-4-lexiang-style-kb.md` | §12 追加 R5-R13 九段（含验收标准 7-14） |
+
+### 关键设计摘要
+
+- **R10 零后端复用**：useSSE.SendOptions.documentIds（第五轮 T6 已有）+ chat.py 路由无条件 `_get_or_create_conversation`（conversation_id=None 自动建会话）→ DocChatPanel 仅改前端传参即打通 multi_scope 链
+- **R12 入口语义化**：收起态 = 工作台顶栏最右「问AI」主色按钮（入口唯一）；展开态 = 面板 header 右上角 CloseOutlined（操作就地）——替代原先占中部的双态切换按钮
+- **R13 来源快照模式**：sourceTags 在发送时刻快照写入消息对象（历史恢复的旧消息无此字段则不渲染 tag 行，无回填成本）
+- **行规格统一 token**：文案 14px/#1f2329、icon 16px/#646a73、辅色/默认 icon #8f959e hover #1677ff——侧栏（问AI/历史/目录）与弹层全部同源
+
+### 验收结果
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | R5 新建对话 icon 化 | ✅ navNewBtn 存在、newConvBtn 已删、颜色 rgb(143,149,158)=#8f959e |
+| 2 | R6 箭头下/上方向 | ✅ caret=anticon-down，收起态 transform none（▾） |
+| 3 | R7 侧栏行规格统一 | ✅ 历史/目录标题均 14px/rgb(31,35,41)，icon 均 16px |
+| 4 | R8 弹层加宽无横滚 | ✅ CSSOM 断言 twoPane width:560px |
+| 5 | R9/R11 控件紧凑化 | ✅ rowArrow/itemCheck/countBadge 无 margin-left 规则（空数组=已删） |
+| 6 | R13 问题块对齐乐享 | ✅ 两处 .user justifyContent:flex-start、userBubble bg rgb(236,236,238)=#ececee radius 10px |
+| 7 | 质量门 | ✅ tsc -b 零错误；后端零改动（无需重启）；禁区五文件 diff 空 |
+
+### 遇到的问题
+
+1. **SearchReplace 误删 JSX 开标签**：DocChatPanel 一条替换把 `<div className={styles.inputActions}>` 连注释一并替换掉导致「应为)」编译错——修复还原开标签；随后 LSP 仍报错为中间态缓存假错，读文件尾部确认 JSX 结构完整，最终以 tsc exit=0 为准
+2. **样式断言通过 ≠ 交互正确**：R10/R12 属交互行为（多选文档发送、按钮切换面板），本轮仅完成 DOM/CSSOM 结构断言，交互级验证需打开文档工作台实测（见遗留）
+3. **用户连续三次取消 AskUser 弹窗**（每次取消即补充新反馈截图）→ 改为文字汇报九项清单，用户文字回复「确认」后实施——高反馈密度返工轮次中弹窗确认效率低于文字确认
+
+### 遗留事项（P1）
+
+- R10/R12 交互级实测未做（打开文档工作台：多选文档发送走 multi_scope、问AI 按钮/关闭按钮切换）
+- R13 历史旧消息无 sourceTags 字段不显示 tag 行（快照模式预期行为，如需回填需迁移历史会话）
+- 沿袭上轮：历史对话空态、暗色模式、移动端适配
 
 ## 第五轮返工：侧栏企业级精修 + 布局缺陷修复 + 主区域背景对齐（2026-10-16）
 

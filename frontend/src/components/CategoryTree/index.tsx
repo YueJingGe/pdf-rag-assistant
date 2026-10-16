@@ -14,8 +14,12 @@ import {
 } from "antd";
 import {
   FolderOutlined,
+  DownOutlined,
   FileTextOutlined,
   FileMarkdownOutlined,
+  FilePdfOutlined,
+  FileWordOutlined,
+  MoreOutlined,
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
@@ -123,6 +127,8 @@ export default function CategoryTree({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadOpen, setUploadOpen] = useState(false);
+  // 返工 R17（v1.5 §12）：目录行「+」菜单上传文件可挂该目录（乐享式行内上传）
+  const [uploadCategoryId, setUploadCategoryId] = useState<number | null>(null);
 
   const [modalMode, setModalMode] = useState<ModalMode | null>(null);
   const [modalTitle, setModalTitle] = useState("");
@@ -232,16 +238,25 @@ export default function CategoryTree({
   };
 
   // ---- 组树：目录嵌套 + 未归类虚拟节点 + 文档挂载 ----
+  // 返工 R17（v1.5 §12）：文档 icon 按类型着色（乐享式：PDF 红 / Word 蓝 / 在线 MD 绿 / 其他灰）
+  const docIcon = (d: TreeNodeDocument) => {
+    if (d.source === "online")
+      return <FileMarkdownOutlined style={{ color: "#52c41a" }} />;
+    const name = d.filename.toLowerCase();
+    if (name.endsWith(".pdf"))
+      return <FilePdfOutlined style={{ color: "#e64545" }} />;
+    if (name.endsWith(".doc") || name.endsWith(".docx"))
+      return <FileWordOutlined style={{ color: "#2b7cd3" }} />;
+    return <FileTextOutlined style={{ color: "#8c8c8c" }} />;
+  };
+
   const docNode = (d: TreeNodeDocument): DataNode => ({
     key: `doc-${d.id}`,
-    icon:
-      d.source === "online" ? (
-        <FileMarkdownOutlined style={{ color: "#52c41a" }} />
-      ) : (
-        <FileTextOutlined style={{ color: "#8c8c8c" }} />
-      ),
+    icon: docIcon(d),
     title: (
-      <span className={styles.nodeTitle}>
+      <span
+        className={`${styles.nodeTitle} ${activeDocId === d.id ? styles.nodeTitleActive : ""}`}
+      >
         {selectMode && canManage && (
           <Checkbox
             checked={checkedDocs.has(d.id)}
@@ -285,7 +300,7 @@ export default function CategoryTree({
               },
             }}
           >
-            <span className={styles.nodeMore} onClick={(e) => e.stopPropagation()}>···</span>
+            <span className={styles.nodeMore} onClick={(e) => e.stopPropagation()}><MoreOutlined /></span>
           </Dropdown>
         )}
       </span>
@@ -298,7 +313,8 @@ export default function CategoryTree({
     categories.forEach((c) =>
       catNodes.set(c.id, {
         key: `cat-${c.id}`,
-        icon: <FolderOutlined style={{ color: "#1677ff" }} />,
+        /* 返工 R17（v1.5 §12）：folder icon 对齐乐享金描边色 */
+        icon: <FolderOutlined style={{ color: "#faad14" }} />,
         title: (
           <span className={styles.nodeTitle}>
             {selectMode && canManage && (
@@ -316,28 +332,50 @@ export default function CategoryTree({
             >
               {c.name}
             </span>
+            {/* 返工 R17（v1.5 §12）：目录行乐享式双工具钮——「⋮」更多操作（重命名/删除）+「+」新建（文档/子目录/上传挂该目录） */}
             {canManage && !selectMode && (
-              <Dropdown
-                trigger={["click"]}
-                menu={{
-                  items: [
-                    { key: "newDoc", label: "新建文档", icon: <FileAddOutlined /> },
-                    { key: "newCat", label: "新建子目录", icon: <PlusOutlined /> },
-                    { key: "rename", label: "重命名", icon: <EditOutlined /> },
-                    { type: "divider" },
-                    { key: "delete", label: "删除（文档移至根）", icon: <DeleteOutlined />, danger: true },
-                  ],
-                  onClick: ({ key, domEvent }) => {
-                    domEvent.stopPropagation();
-                    if (key === "newDoc") openNewDocModal(c);
-                    if (key === "newCat") openNewCatModal(c);
-                    if (key === "rename") openRenameCatModal(c);
-                    if (key === "delete") deleteCategory(c);
-                  },
-                }}
-              >
-                <span className={styles.nodeMore} onClick={(e) => e.stopPropagation()}>···</span>
-              </Dropdown>
+              <span className={styles.nodeTools} onClick={(e) => e.stopPropagation()}>
+                <Dropdown
+                  trigger={["click"]}
+                  menu={{
+                    items: [
+                      { key: "rename", label: "重命名", icon: <EditOutlined /> },
+                      { type: "divider" as const },
+                      { key: "delete", label: "删除（文档移至根）", icon: <DeleteOutlined />, danger: true },
+                    ],
+                    onClick: ({ key, domEvent }) => {
+                      domEvent.stopPropagation();
+                      if (key === "rename") openRenameCatModal(c);
+                      if (key === "delete") deleteCategory(c);
+                    },
+                  }}
+                >
+                  <Tooltip title="更多操作">
+                    <span className={styles.nodeTool}><MoreOutlined /></span>
+                  </Tooltip>
+                </Dropdown>
+                <Dropdown
+                  trigger={["click"]}
+                  menu={{
+                    items: [
+                      { key: "newDoc", label: "新建文档", icon: <FileAddOutlined /> },
+                      { key: "newCat", label: "新建子目录", icon: <PlusOutlined /> },
+                      { type: "divider" as const },
+                      { key: "upload", label: "上传文件", icon: <UploadOutlined /> },
+                    ],
+                    onClick: ({ key, domEvent }) => {
+                      domEvent.stopPropagation();
+                      if (key === "newDoc") openNewDocModal(c);
+                      if (key === "newCat") openNewCatModal(c);
+                      if (key === "upload") triggerUpload(c.id);
+                    },
+                  }}
+                >
+                  <Tooltip title="新建">
+                    <span className={styles.nodeTool}><PlusOutlined /></span>
+                  </Tooltip>
+                </Dropdown>
+              </span>
             )}
           </span>
         ),
@@ -466,7 +504,10 @@ export default function CategoryTree({
   };
 
   // 「目录」标题行「+」菜单（根级新建 / 上传文件，能力自足不依赖外部）
-  const triggerUpload = () => fileInputRef.current?.click();
+  const triggerUpload = (categoryId: number | null) => {
+    setUploadCategoryId(categoryId);
+    fileInputRef.current?.click();
+  };
 
   const handleFileChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -486,7 +527,7 @@ export default function CategoryTree({
     onClick: ({ key }: { key: string }) => {
       if (key === "newDoc") openNewDocModal(null);
       if (key === "newCat") openNewCatModal(null);
-      if (key === "upload") triggerUpload();
+      if (key === "upload") triggerUpload(null);
     },
   };
 
@@ -503,7 +544,8 @@ export default function CategoryTree({
       {showHeader && (
         <div className={styles.treeHeader}>
           <span className={styles.treeHeaderTitle}>
-            <AppstoreOutlined style={{ marginRight: 6 }} />
+            {/* 返工 R7（v1.5 §12）：去 inline style 改 class，icon 规格与导航行统一 */}
+            <AppstoreOutlined className={styles.treeHeaderIcon} />
             目录
           </span>
           {canManage && (
@@ -534,6 +576,8 @@ export default function CategoryTree({
         </div>
       )}
 
+      {/* 返工 R18（v1.5 §12）：switcher 改细线 chevron（DownOutlined，展开 ∨ / 收起 ＞），
+          替代 antd 默认实心黑三角，对齐乐享箭头形态；颜色由 less 控制 */}
       {treeData.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -544,6 +588,7 @@ export default function CategoryTree({
         <Tree
           showIcon
           blockNode
+          switcherIcon={<DownOutlined />}
           treeData={treeData}
           expandedKeys={expandedKeys}
           onExpand={(keys) => setExpandedKeys(keys)}
@@ -562,7 +607,7 @@ export default function CategoryTree({
       />
       <UploadModal
         kbId={kbId}
-        categoryId={null}
+        categoryId={uploadCategoryId}
         files={uploadFiles}
         open={uploadOpen}
         onClose={() => {

@@ -8,6 +8,7 @@ import {
   Space,
   Select,
   Modal,
+  Tree,
   TreeSelect,
   Tag,
   message,
@@ -26,7 +27,10 @@ import {
   LoadingOutlined,
   PaperClipOutlined,
   FileTextOutlined,
-  SaveOutlined,
+  FileAddOutlined,
+  CheckOutlined,
+  AppstoreOutlined,
+  DownOutlined,
 } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -41,6 +45,7 @@ import InputPlusPopover, {
 } from "../InputPlusPopover";
 import {
   chatApi,
+  categoryApi,
   knowledgeBaseApi,
   type Citation,
   type RetrievalDebug,
@@ -64,6 +69,7 @@ interface MessageItem {
   citations?: Citation[];
   retrievalDebug?: RetrievalDebug | null;
   toolTraces?: ToolTraceItem[]; // P0-3a：Agent 工具调用轨迹（后端未持久化，历史恢复时无此数据）
+  sourceTags?: string[]; // 返工 R13（v1.5 §12）：发送时信息源快照（乐享式问题块首行 tag；历史恢复的旧消息无此字段不显示）
 }
 
 interface Props {
@@ -120,6 +126,10 @@ export default function ChatWindow({
   const [saveCatTree, setSaveCatTree] = useState<TreeData | null>(null);
   const [saveCatLoading, setSaveCatLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // 返工 R19（v1.5 §12）：「添加到」弹框内新建文件夹（乐享式交互）
+  const [saveNewCatEditing, setSaveNewCatEditing] = useState(false);
+  const [saveNewCatName, setSaveNewCatName] = useState("");
+  const [saveCreatingCat, setSaveCreatingCat] = useState(false);
 
   const effectiveKbId = knowledgeBaseId ?? 0; // 普通聊天用 0 作为 kb_id
 
@@ -327,6 +337,7 @@ export default function ChatWindow({
         content: question,
         images: imagesToSend.length > 0 ? imagesToSend : undefined,
         fileName: fileToSend?.filename,
+        sourceTags: sourceTagNames(),
       },
     ]);
 
@@ -384,12 +395,38 @@ export default function ChatWindow({
     setSaveTargetKbId(knowledgeBaseId ?? null); // 默认当前 KB
     setSaveCatId(null);
     setSaveCatTree(null);
+    setSaveNewCatEditing(false); // R19：重置弹框内新建文件夹编辑态
+    setSaveNewCatName("");
     setSaveModalOpen(true);
     if (knowledgeBaseId) loadSaveCats(knowledgeBaseId);
     knowledgeBaseApi
       .list()
       .then(({ data }) => setSaveKbList(data))
       .catch(() => setSaveKbList([]));
+  };
+
+  // 返工 R19（v1.5 §12）：弹框内新建文件夹（乐享式），建在当前 KB 根目录并刷新树
+  const handleCreateCatFolder = async () => {
+    const name = saveNewCatName.trim();
+    if (!saveTargetKbId || !name) {
+      message.warning("请输入文件夹名称");
+      return;
+    }
+    setSaveCreatingCat(true);
+    try {
+      await categoryApi.create(saveTargetKbId, { name, parent_id: null });
+      message.success(`已创建文件夹「${name}」`);
+      setSaveNewCatName("");
+      setSaveNewCatEditing(false);
+      loadSaveCats(saveTargetKbId);
+    } catch (err: unknown) {
+      const resp = (
+        err as { response?: { data?: { detail?: string } } }
+      ).response;
+      message.error(resp?.data?.detail || "创建失败，请稍后再试");
+    } finally {
+      setSaveCreatingCat(false);
+    }
   };
 
   const handleSaveKbChange = (kbId: number) => {
@@ -437,6 +474,19 @@ export default function ChatWindow({
   const isPlainChat = source.kbIds.length === 0 && source.docIds.length === 0;
   const isMultiKb = source.kbIds.length > 1 || source.docIds.length > 0;
   const primaryKbId = source.kbIds[0] ?? null;
+  // 返工 R13：信息源快照（发送时写入问题块首行 tag；库名兜底逻辑与 tags 行一致）
+  const sourceTagNames = (): string[] => {
+    const names: string[] = [];
+    if (source.docSelected) names.push("当前文档");
+    source.kbIds.forEach((id) =>
+      names.push(
+        allKbs.find((k) => k.id === id)?.name ??
+          (id === knowledgeBaseId && knowledgeBaseName ? knowledgeBaseName : `知识库${id}`)
+      )
+    );
+    if (source.docIds.length > 0) names.push(`${source.docIds.length} 个文档`);
+    return names;
+  };
   // 乐享式空态：无消息且非加载中 → 欢迎页（隐藏顶栏与消息流空态）
   const isEmptyHome = messages.length === 0 && !sse.loading && !historyLoading;
 
@@ -497,12 +547,17 @@ export default function ChatWindow({
                   />
                 )}
                 <div className={styles.assistantFooter}>
-                  <Typography.Text
-                    type="secondary"
-                    className={styles.aiDisclaimer}
+                  {/* 返工 R19（v1.5 §12）：footer 乐享化——「添加到」文字按钮 + 复制紧凑排列
+                      （原 space-between 把两个 icon 拉散到行两端，用户反馈）；免责文案跟随其后 */}
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<FileAddOutlined />}
+                    className={styles.addToBtn}
+                    onClick={() => handleOpenSaveModal(msg.content)}
                   >
-                    本回答由 AI 生成，内容仅供参考，请仔细甄别。
-                  </Typography.Text>
+                    添加到
+                  </Button>
                   <Tooltip title="复制回答">
                     <Button
                       type="text"
@@ -515,19 +570,26 @@ export default function ChatWindow({
                       }}
                     />
                   </Tooltip>
-                  <Tooltip title="存为知识库文档">
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<SaveOutlined />}
-                      className={styles.copyBtn}
-                      onClick={() => handleOpenSaveModal(msg.content)}
-                    />
-                  </Tooltip>
+                  <Typography.Text
+                    type="secondary"
+                    className={styles.aiDisclaimer}
+                  >
+                    本回答由 AI 生成，内容仅供参考，请仔细甄别。
+                  </Typography.Text>
                 </div>
               </div>
             ) : (
+              /* 返工 R13（v1.5 §12）：用户提问改乐享式左对齐浅灰块（首行信息源 tag + 次行问题文字） */
               <div className={styles.userBubble}>
+                {msg.sourceTags && msg.sourceTags.length > 0 && (
+                  <div className={styles.userBubbleTags}>
+                    {msg.sourceTags.map((t, i) => (
+                      <span key={i} className={styles.userBubbleTag}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <Typography.Text style={{ whiteSpace: "pre-wrap" }}>
                   {msg.content}
                 </Typography.Text>
@@ -764,51 +826,156 @@ export default function ChatWindow({
         />
       </div>
 
-      {/* P0-4：存为知识库文档弹窗 */}
+      {/* P0-4：存为知识库文档弹窗；返工 R19（v1.5 §12）：升级乐享式「添加到」弹框——
+          标题+副标题、左 KB 列表 + 右目录树双栏、底部「+ 新建文件夹」行内交互，确认/取消右下角 */}
       <Modal
-        title="存为知识库文档"
         open={saveModalOpen}
-        onOk={handleSaveMessage}
         onCancel={() => setSaveModalOpen(false)}
-        confirmLoading={saving}
-        okText="存入"
+        width={640}
         destroyOnClose
+        title={
+          <div>
+            <div>添加到</div>
+            <Typography.Text
+              type="secondary"
+              style={{ fontSize: 12, fontWeight: 400 }}
+            >
+              可添加到有新建权限的知识库目录下
+            </Typography.Text>
+          </div>
+        }
+        footer={
+          <div className={styles.saveModalFooter}>
+            {saveNewCatEditing ? (
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <Input
+                  size="small"
+                  style={{ width: 180 }}
+                  placeholder="文件夹名称"
+                  value={saveNewCatName}
+                  onChange={(e) => setSaveNewCatName(e.target.value)}
+                  onPressEnter={handleCreateCatFolder}
+                  /* 返工 R24（v1.5 §12）：Esc 收起新建态（交互闭环：可取消） */
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setSaveNewCatEditing(false);
+                      setSaveNewCatName("");
+                    }
+                  }}
+                  autoFocus
+                />
+                <Button
+                  size="small"
+                  type="primary"
+                  loading={saveCreatingCat}
+                  onClick={handleCreateCatFolder}
+                >
+                  确定
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setSaveNewCatEditing(false);
+                    setSaveNewCatName("");
+                  }}
+                >
+                  取消
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="text"
+                size="small"
+                icon={<PlusOutlined />}
+                disabled={!saveTargetKbId}
+                onClick={() => setSaveNewCatEditing(true)}
+              >
+                新建文件夹
+              </Button>
+            )}
+            <Space>
+              <Button onClick={() => setSaveModalOpen(false)}>取消</Button>
+              <Button type="primary" loading={saving} onClick={handleSaveMessage}>
+                确认
+              </Button>
+            </Space>
+          </div>
+        }
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div>
-            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4 }}>
-              目标知识库
+        <div className={styles.saveModalBody}>
+          <div className={styles.saveKbPane}>
+            <Typography.Text type="secondary" className={styles.savePaneLabel}>
+              知识库
             </Typography.Text>
-            <Select
-              style={{ width: "100%" }}
-              placeholder="选择知识库"
-              value={saveTargetKbId ?? undefined}
-              onChange={handleSaveKbChange}
-              options={saveKbList.map((kb) => ({ value: kb.id, label: kb.name }))}
-            />
+            <div className={styles.saveKbList}>
+              {saveKbList.map((kb) => (
+                <div
+                  key={kb.id}
+                  className={`${styles.saveKbItem} ${
+                    saveTargetKbId === kb.id ? styles.saveKbItemActive : ""
+                  }`}
+                  onClick={() => handleSaveKbChange(kb.id)}
+                >
+                  <AppstoreOutlined className={styles.saveKbIcon} />
+                  <span className={styles.saveKbName}>{kb.name}</span>
+                </div>
+              ))}
+            </div>
           </div>
-          <div>
-            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4 }}>
-              目标目录（可选）
+          <div className={styles.saveCatPane}>
+            <Typography.Text type="secondary" className={styles.savePaneLabel}>
+              知识库目录
             </Typography.Text>
-            <TreeSelect
-              style={{ width: "100%" }}
-              treeData={buildCategorySelectTree(saveCatTree?.categories ?? [])}
-              value={saveCatId ?? undefined}
-              onChange={(v) => setSaveCatId(v ?? null)}
-              placeholder="不选则存入「未归类」"
-              treeDefaultExpandAll
-              loading={saveCatLoading}
-              allowClear
-            />
+            {/* 根目录选项：乐享「知识库一级目录」，选中时右侧 ✓ */}
+            <div
+              className={`${styles.saveCatRoot} ${
+                saveCatId === null ? styles.saveCatRootActive : ""
+              }`}
+              onClick={() => setSaveCatId(null)}
+            >
+              <AppstoreOutlined className={styles.saveKbIcon} />
+              <span className={styles.saveKbName}>
+                {saveKbList.find((k) => k.id === saveTargetKbId)?.name ??
+                  "知识库一级目录"}
+              </span>
+              <span className={styles.saveCatRootHint}>知识库一级目录</span>
+              {saveCatId === null && (
+                <CheckOutlined className={styles.saveCatCheck} />
+              )}
+            </div>
+            {saveCatLoading ? (
+              <div style={{ padding: 16 }}>
+                <Spin size="small" />
+              </div>
+            ) : (
+              <Tree
+                switcherIcon={
+                  <DownOutlined style={{ color: "#8f959e", fontSize: 10 }} />
+                }
+                treeData={buildCategorySelectTree(saveCatTree?.categories ?? [])}
+                selectedKeys={saveCatId != null ? [saveCatId] : []}
+                onSelect={(keys) => {
+                  if (keys[0] != null) setSaveCatId(Number(keys[0]));
+                }}
+                blockNode
+              />
+            )}
           </div>
-          <Typography.Paragraph
-            type="secondary"
-            ellipsis={{ rows: 3, expandable: true, symbol: "展开" }}
-            style={{ background: "#fafafa", padding: 8, borderRadius: 6, marginBottom: 0 }}
-          >
-            {saveContent}
-          </Typography.Paragraph>
+        </div>
+        {/* 返工 R24（v1.5 §12）：预览区改 markdown 渲染（原裸露星号井号源码），与消息区同款样式 */}
+        <div
+          className={styles.markdownContent}
+          style={{
+            background: "#fafafa",
+            padding: "8px 12px",
+            borderRadius: 6,
+            marginTop: 12,
+            maxHeight: 140,
+            overflowY: "auto",
+            fontSize: 13,
+          }}
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{saveContent}</ReactMarkdown>
         </div>
       </Modal>
     </div>
