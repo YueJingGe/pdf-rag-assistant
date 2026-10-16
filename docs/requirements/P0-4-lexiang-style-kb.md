@@ -511,6 +511,8 @@
 
 第五轮交付后用户对照乐享反馈三点：① 不要滚动条（侧栏整体滚动条 + 信息源弹层目录树横向滚动条）；② 用户卡未固定在侧栏左下角；③ 侧栏字号/背景/颜色/icon 层级感不足，「还像 demo 不像企业版」。纯前端返工，后端零改动。
 
+第三批反馈（同日，带批注截图）：④ 新建对话按钮太长，改为一个 icon 放在「问AI」右侧；⑤ 历史对话箭头换成向下/向上方向；⑥ 历史对话行/目录行的 icon 与文案规格与问AI/知识地图不一致，「同一侧边栏好几种大小颜色」——并入本轮 R5-R7。
+
 ### 12.2 根因（已勘察确认）
 
 - **滚动/用户卡不贴底同源**：MainPage Sider 带 `overflow: 'auto'`；且 Sidebar less 中 `.treeWrap` 类缺失（tsx 引用但无样式）→ 目录树无滚动容器撑高内容 → Sider 整体滚动、userCard 被顶到内容尾部而非底部
@@ -542,6 +544,45 @@
 - inputArea 去顶部 border-top、背景与消息区连成一体；inputCard 边框改极浅 #ebedf0 + 轻阴影（聚焦态淡蓝描边）
 - DocChatPanel 输入带同步（背景/边框同款）；header 分隔线统一 #ebedf0
 
+**R5 新建对话入口改 icon（第三批反馈④）**
+- 删通栏「+ 新建对话」按钮（Button block）
+- 「问AI」导航项右侧加 PlusOutlined icon 按钮：常显弱化色（#8f959e，hover #1677ff）**（决策点待确认：常显 vs hover 显）**；点击行为不变（p04:conv-new + onGoChat）
+
+**R6 历史对话箭头方向（第三批反馈⑤）**
+- RightOutlined（右→旋转 90°）改为 DownOutlined：收起=向下 ▾、展开=旋转 180° 向上 ▴（transition 保留）
+
+**R7 侧栏行规格统一（第三批反馈⑥）**
+- 历史对话标题行：文案 12px #8f959e → 14px #1f2329（与导航一致）；时钟 icon 16px #646a73；行 padding 对齐 navItem（8px 10px）
+- 「目录」标题行（CategoryTree）：13px #333 → 14px #1f2329/600；AppstoreOutlined 16px #646a73（去 inline style 改 class）
+- 折叠箭头作为功能性指示符保持 12px（仅修正方向，不与导航 icon 等大）
+
+**R8 信息源弹层加宽 + 彻底去横向滚动条（用户追加反馈，截图批注「面板要足够宽不要横向滚动条」）**
+- twoPane 460px → 560px（treePane 净宽约 380px，文档标题截断减少）
+- 排查滚动条来源：R1 已设 treePane `overflow-x:hidden` 但用户截图仍见横向滚动条——双保险：treePane 与 .sourceTree 内 .ant-tree 容器均约束 overflow-x；节点宽度约束随面板加宽同步放宽（标题 ellipsis 阈值提高）
+- 验收：弹层可视状态无横向滚动条；勾选列表完整可读
+
+**R9 一级弹层行内控件紧凑化（用户追加反馈，截图批注「中间的空太大了」）**
+- 根因：sourceRow 的 Switch 与 itemCheck 的 ✓ 均用 `margin-left: auto` 右推拉满，280px 弹层内标签与控件间出现大片空白
+- 修复：去 margin-left:auto，控件（全网搜索开关/全部知识✓/当前文档✓）紧跟标签（沿用 gap），对齐乐享原版「🌐 全网搜索 [开关]」紧凑形态
+
+**R10 文档工作台问AI 信息源对齐主聊天（用户反馈：与问AI 未选文档时应一致，允许多选其他文档）**
+- 现状：DocChatPanel 传 `allowDocScope={false}`（单列模式，仅 当前文档/全部知识/各库勾选，无文档级多选）
+- 修复：放开为默认两栏模式（与主聊天同构：左库列表+右目录树勾到具体文档）；source 纳入 docIds；发送链路 docIds 非空 → documentIds 走 multi_scope 合并链（useSSE 已支持，后端零改动）；sourceTags 渲染 docIds 聚合 tag；空态文案/placeholder 同步 docIds 态
+- 保留约定：当前文档 docSelected（轻流式）与 docIds/kbIds 互斥不变；Agent 不进入工作台面板
+
+**R11 一级弹层行内控件紧凑化（用户追加反馈「同样中间空太大了」，与 R9 同类）**
+- 范围：一级 panel（260px）的「深度思考」行（Switch 拉满右侧）与「信息源」行（countBadge/rowArrow 双 margin-left:auto 拉满）
+- 修复：去 margin-left:auto，开关/badge/箭头紧跟标签；与 R9 合并执行（R9 覆盖二级 sourcePanel，R11 覆盖一级 panel），主聊天/DocChatPanel 共用组件自动同步
+
+**R12 工作台问AI 展开/收起入口对齐乐享（用户反馈「换个位置，收起时候用问ai展开，展开时候用关闭收起」+ 乐享对照截图）**
+- 现状：「展开问AI」按钮在工作台顶栏中部（文档名/标签右侧），面板展开时仍占位；收起/展开入口分离不直观
+- 修复（严格对齐乐享）：① 收起态：入口移至工作台顶栏最右侧（× 关闭按钮旁）显示「😊 问AI」按钮，点击展开；② 展开态：顶栏按钮隐藏，面板 header 右上角提供收起 icon（tooltip「关闭」），点击收起（onClose 传 DocumentWorkbench）
+
+**R13 用户提问（question）展示样式对齐乐享（用户反馈「对话中 question 的样式要保持一致」+ 乐享截图圈选问题块）**
+- 乐享形态：用户提问不是右侧气泡，而是 AI 回答上方的浅灰圆角块（左对齐）：首行信息源 tag（如「📄 课程作息表」），次行问题文字；无信息源时仅问题文字行
+- 现状：第五轮 T4 实现为用户右侧 #e8f3ff 气泡（主聊天/DocChatPanel 同款）
+- 修复：ChatWindow/DocChatPanel 用户消息改左对齐浅灰块（含 sourceTags 信息源 tag + 问题文字，两行结构）；主聊天与工作台同款保持一致
+
 ### 12.4 验收标准
 
 1. 页面级与侧栏无滚动条（仅树区内部滚动）；信息源弹层目录树无横向滚动条
@@ -550,6 +591,14 @@
 4. 字号/间距/icon 色彩对照 §12.3 R3 规格表；无 Divider 硬分割
 5. 质量门：tsc 零错误；后端零改动（git diff backend/ 为空）；禁区五文件 diff 空
 6. 交互回归：切库/新建对话/历史展开/树操作/弹层勾选文档链路全部可用（DOM 快照验证）
+7. 新建对话为「问AI」行右侧 icon（无通栏按钮），点击清空开新会话
+8. 历史对话箭头收起=向下、展开=向上
+9. 历史对话行/「目录」行文案 14px #1f2329、icon 16px，与导航行一致（DOM 断言 fontSize/color）
+10. 信息源弹层宽 560px、可视状态无横向滚动条（DOM 断言 scrollWidth <= clientWidth）
+11. 一级/二级弹层全部行内控件（深度思考开关/信息源 badge+箭头/全网搜索开关/✓）紧跟标签，无右推空白（DOM 断言间距）
+12. 文档工作台问AI 弹层为两栏模式（可勾到具体文档）；勾文档后发送走 multi_scope（引用含所选文档内容）
+13. 问AI 收起态：顶栏最右「问AI」按钮（×旁）；展开态：顶栏按钮隐藏、面板右上角「关闭」icon 可收起
+14. 用户提问块为左对齐浅灰圆角块（含信息源 tag + 问题文字），主聊天/文档工作台样式一致（DOM 断言对齐/背景色）
 
 ### 12.5 实施顺序
 
