@@ -398,3 +398,109 @@
 - 目录视图与单视图的返回交互取最简实现（关闭按钮/面包屑），不做历史栈
 - kb=0 旧会话不可见属预期行为，迁移脚本 P1
 - CategoryTree 选中态需与 /spaces 管理页隔离（管理页无 activeDoc 概念，prop 可选化）
+
+## 11. 第五轮需求（v1.4，2026-10-16）：UI 全面还原乐享 + 信息源文档级多选
+
+> 用户对照乐享截图（6 张）再提 7 条：① 个人知识库不可新建/删除，仅重命名；② 新建对话入口放「问AI」上方；③ 历史对话箭头默认收起；④ 整体 UI（样式/颜色/背景/icon）尽可能还原乐享；⑤ 「+」放对话框左下角、发送 icon 右下角；⑥ 信息源多选要能选到库下面具体文档（参考乐享两栏选择器）；⑦ placeholder 按信息源状态区分。
+> 已澄清 4 决策（均选推荐项）：**库入口完全对齐乐享**（移除侧栏「+新建知识库」按钮与「删除知识库」菜单，仅保留重命名+管理；后端多库架构保留）；**移除全局 Header**（顶部系统名白条移除，内容区铺满，浏览器标签页标题保留）；**接受后端非禁区增量**（chat.py + chat_service.py 新增 document_ids 参数与多范围合并链，禁区五文件零改动，冒烟新增⑮，文档数上限 ≤20）；**空态输入框维持固定底部**（输入区始终固定底部，空态仅标题居中，不随空态上移）。
+
+### 11.1 范围总览（7 任务）
+
+| # | 任务 | 类型 |
+|---|---|---|
+| T1 | 个人知识库保护（不可新建/删除，仅重命名） | 前端 |
+| T2 | 新建对话入口移到侧栏「问AI」上方 | 前端 |
+| T3 | 历史对话折叠（默认收起 + 箭头展开） | 前端 |
+| T4 | 整体 UI 还原乐享（移除全局 Header / 侧栏视觉 / 消息形态 / 消息区居中限宽） | 前端 |
+| T5 | 输入区布局（圆角容器 /「+」左下 / 圆形发送右下） | 前端 |
+| T6 | 信息源文档级多选（两栏弹层 + 后端 document_ids 多范围合并链） | 前端 + 后端（非禁区） |
+| T7 | placeholder 按信息源状态区分（派生函数五态） | 前端 |
+
+### 11.2 任务分解
+
+**T1 个人知识库保护**
+
+- 识别锚点：前端 `name === '个人知识库'`（第二轮迁移脚本 `DEFAULT_TARGET_NAME` 固定产物名；纯 UI 约定，无后端字段。局限：该库被重命名后视为普通库，见 §11.5）
+- KnowledgeBaseSidebar：移除「+新建知识库」按钮（乐享无此入口）与「删除知识库」菜单项；保留「管理」「重命名知识库」菜单项与重命名弹窗（新建 Modal 组件一并移除）
+- SpacesPage（/spaces/:kbId 管理页）：当前库为个人知识库时隐藏底部「删除知识库」按钮
+- 后端 DELETE /api/knowledge_bases/{id} 端点保留（能力不删，仅 UI 收敛入口；其余库删除共用）
+
+**T2 新建对话入口移到问AI 上方**
+
+- Sidebar nav 区顶部加「新建对话」按钮（乐享同位置：整宽浅色按钮，PlusOutlined）
+- 事件总线新事件 `p04:conv-new`（侧栏 → 聊天窗）；ChatWindow 监听：messages 清空 + conversationId 置 null（语义 = 开新对话；旧会话仍留在历史列表）
+- ChatWindow 顶栏「新对话」按钮移除（入口唯一化）；顶栏仅保留标题与调试按钮
+
+**T3 历史对话折叠**
+
+- historyBlock 标题行加 caret（RightOutlined，展开时旋转 90°），点击切换
+- 默认收起（collapsed=true）；收起时列表不渲染
+
+**T4 整体 UI 还原乐享**
+
+- MainPage：移除全局 antd Header（「📚 PDF RAG 智能问答系统」白条）及其 Layout 解构；Sider/Content 铺满视口
+- 侧栏视觉（对齐乐享截图）：导航项/历史项圆角浅灰 hover、选中态浅蓝底蓝字、字号 13–14、间距紧凑；库切换器与用户卡样式微调
+- 消息形态（对齐乐享）：用户消息 = 右侧浅色气泡（无头像）；AI 消息 = 左侧纯文本（无气泡无头像）；AI 消息保留复制/存为文档/免责行
+- 消息流居中限宽（约 780px）
+- ChatWindow 空态维持（笑脸 + 「今天从哪里开始?」）；输入区维持固定底部（已确认不移到空态居中）
+
+**T5 输入区布局**
+
+- 白色圆角容器（radius ≈16px、浅边框/阴影）纵向包裹：信息源 tags 行 → TextArea（无边框透明，autoSize）→ 底部工具行
+- 底部工具行：左 =「+」按钮（InputPlusPopover 触发器；直聊时左侧追加图片/文件上传按钮）；右 = 圆形蓝色发送按钮（loading 时切「停止」）
+- 免责行移到容器下方居中
+- DocChatPanel 输入区同款布局（容器圆角 + 左「+」右发送）
+
+**T6 信息源文档级多选（两栏弹层）**
+
+前端：
+
+- `InputSourceValue` 扩展：`{ docSelected: boolean; kbIds: number[]; docIds: number[] }`（docIds = 勾选的文档 id 集合；docSelected「当前文档」是 DocChatPanel 特例，与 docIds 互斥）
+- 二级弹层改两栏（对齐乐享截图）：左栏 = 知识库列表（Checkbox + 头像块 + 「当前」标记 + 右箭头）；点击库 → 右栏显示该库目录树（antd Tree + Checkbox、蓝色文件夹图标，可勾选目录与文档）
+- 目录勾选语义 = 其下全部文档（含子目录递归），前端从 getTree(kbId) 解析为文档 id 集合（chunk metadata 无 category_id，目录级检索过滤属禁区 P1，本轮前端展开为文档集合）
+- 交互规则：勾库 Checkbox = 整库范围（进 kbIds）；右栏勾文档/目录 = 文档范围（进 docIds，该库 Checkbox 呈全选/半选态）；kbIds 与 docIds 可并存（混合范围）；「全部知识」项 = 一键勾选所有库（清 docIds）；文档数上限 ≤20，超出 message.warning 提示按库选择
+- tags 行：库显示库名 tag、文档显示文档名 tag
+- ChatWindow handleSend：docIds 非空时经 useSSE 新增 `documentIds` 透传 body.document_ids；Agent 模式/全网搜索/深度思考约束沿用并扩展（见下）；DocChatPanel 沿用 docSelected 路径不变
+
+后端（非禁区增量，chat.py + chat_service.py）：
+
+- ChatRequest 加 `document_ids: list[int] | None`；/stream 判定链扩展：`multi_kb_ids 或 document_ids 非空` → 走合并链（纯单库/单文档老路径行为零变化，Agent 模式前端不传 documentIds）
+- chat_service 新增 `multi_scope_rag_stream(kb_ids, doc_ids, question, chat_history)`：doc_ids 逐文档查归属库 + check_doc_access（越权 403 / 串库 404，SSE 前完成）；按库分组 `{kb_id: doc_set | None}`（None=整库）；每库一次 `retrieve_with_strategy(kb_id, question, use_hyde=False)` 取候选 → 文档组库按 `metadata.document_id ∈ doc_set` 过滤、整库库全取 → RRF 分数降序合并去重截断 top_k → 复用禁区 `RAG_PROMPT/_format_context/_build_citations` 纯函数 → `get_llm("rag_generate")` 生成；SSE 事件协议与 multi_kb_rag_stream 一致，strategy="multi_scope"（禁区五文件只 import 不复制不修改）
+- HyDE / 语义缓存：多范围不支持（沿用多库链决策）；前端 hydeDisabled 扩展为「Agent / docSelected / docIds 非空 / kbIds>1」
+- 会话挂载：主信息源 = kbIds[0]，kbIds 空时取 docIds 第一个文档所属库（会话仍落库，历史恢复 citations 可见）
+- 冒烟⑮：FakeListChatModel 零成本断言——混合范围仅命中指定文档、整库候选合并、截断 top_k、来源标记、SSE 事件序列、越权 403 / 串库 404
+
+**T7 placeholder 派生**
+
+- InputPlusPopover 导出 `derivePlaceholder(source)`：docSelected →「基于当前文档进行提问，shift+enter换行」；docIds 非空或 kbIds 多选 →「基于指定知识进行提问，shift+enter换行」；单库 →「基于当前知识库进行提问，shift+enter换行」；空（直聊）→「输入任何问题，shift+enter换行」
+- ChatWindow 与 DocChatPanel 替换现有三分支 placeholder 为派生函数
+
+### 11.3 验收标准
+
+| # | 验收项 | 期望 |
+|---|---|---|
+| 1 | 个人知识库保护 | 侧栏无「+新建知识库」；管理菜单无「删除知识库」；/spaces 个人库无删除按钮；重命名可用 |
+| 2 | 新建对话 | 侧栏「问AI」上方按钮点击 → 消息清空开新对话；顶栏「新对话」按钮移除 |
+| 3 | 历史折叠 | 标题箭头默认收起；点击展开/收起切换 |
+| 4 | UI 还原 | 无全局 Header；侧栏视觉/消息形态（用户右气泡、AI 纯文本）/消息区居中限宽对齐乐享截图 |
+| 5 | 输入区 | 圆角容器；「+」左下、圆形发送右下；DocChatPanel 同款 |
+| 6 | 信息源两栏 | 左栏库列表（勾选 + 当前标记）、右栏目录树可勾选目录/文档；tags 正确；文档上限 20 提示 |
+| 7 | 多范围检索 | 库+文档混合提问仅命中指定文档范围；冒烟⑮全绿；禁区五文件 diff 为空 |
+| 8 | placeholder | 四态文案随信息源切换正确 |
+| 9 | 质量门 | tsc -b 零错误；py_compile 零错误；冒烟全量绿 |
+| 10 | 收尾 | changelog 第五轮追加、README/重难点同步、收尾 commit（经用户确认 message） |
+
+### 11.4 实施顺序（确认后执行）
+
+1. 基线 commit（经用户确认 message）
+2. 后端先行：T6 document_ids 链 + 冒烟⑮（后端可独立验收）
+3. 前端：T1 个人库保护 → T2/T3 侧栏交互 → T4 UI 还原 → T5 输入区 → T6 前端两栏弹层 → T7 placeholder
+4. 验收清单 + changelog 第五轮 + README/重难点同步 + 收尾 commit（经用户确认 message）
+
+### 11.5 风险与裁剪
+
+- 「个人知识库」识别为前端字符串约定（无内置字段），库改名后保护失效——强保护需后端 is_builtin 列（本轮不做，P1）
+- 目录勾选 = 文档集合前端展开：大目录可能超 20 上限，提示按库选；目录级检索过滤（metadata 无 category_id）属禁区需求，P1
+- 多范围链每库一次向量检索 + 候选后过滤：top_k×3 候选对多文档覆盖有限（沿用 doc_scoped 已知约束，禁区支持 top_k 后放宽）
+- UI 还原为「尽可能接近乐享」：基于现有 antd 体系调样式，不引入新 UI 库，不做 1:1 像素级
+- 乐享「基于全部知识」空态语义（空=默认全选）不采纳：我们空 = 直聊（既定语义）；@提及语法、kb=0 旧会话迁移、推荐卡片 → 不做（P1）
