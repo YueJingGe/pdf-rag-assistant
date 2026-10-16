@@ -77,13 +77,31 @@
   }
 }
 
+/* P0-4 第四轮（T6）：输入区容器（信息源 tags + 输入行 + 免责行） */
+.inputArea {
+  flex-shrink: 0;
+  border-top: 1px solid #f0f0f0;
+  padding: 8px 12px 6px;
+}
+
+.sourceTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 6px;
+}
+
 .inputRow {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: flex-end;
-  padding: 8px 12px 12px;
-  border-top: 1px solid #f0f0f0;
   flex-shrink: 0;
+}
+
+.inputActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .input {

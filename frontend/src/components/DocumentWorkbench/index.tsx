@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { Button, Tag, Typography, Space, Spin, message } from "antd";
+import { Button, Tag, Typography, Space, Spin, Tooltip, message } from "antd";
 import {
   SaveOutlined,
   FileMarkdownOutlined,
   FileTextOutlined,
   RobotOutlined,
+  CloseOutlined,
 } from "@ant-design/icons";
 import MDEditor from "@uiw/react-md-editor";
 import ReactMarkdown from "react-markdown";
@@ -23,6 +24,8 @@ interface Props {
   onSaved?: () => void;
   /** P0-4 第三轮（T7）：右侧问AI 面板引用点击 → 外层打开文档查看器 */
   onCitationClick?: (info: CitationClickInfo) => void;
+  /** P0-4 第四轮（T1）：单视图模式关闭文档 → 回问AI 页 */
+  onClose?: () => void;
 }
 
 /**
@@ -38,6 +41,7 @@ export default function DocumentWorkbench({
   categoryName,
   onSaved,
   onCitationClick,
+  onClose,
 }: Props) {
   const [content, setContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
@@ -128,6 +132,11 @@ export default function DocumentWorkbench({
         >
           {chatCollapsed ? "展开问AI" : "收起问AI"}
         </Button>
+        {onClose && (
+          <Tooltip title="关闭文档，回到问AI">
+            <Button size="small" icon={<CloseOutlined />} onClick={onClose} />
+          </Tooltip>
+        )}
       </div>
       <div className={styles.body}>
         <div className={styles.contentPane}>

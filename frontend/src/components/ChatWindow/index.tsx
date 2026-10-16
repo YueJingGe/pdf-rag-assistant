@@ -4,18 +4,12 @@ import {
   Button,
   Typography,
   Spin,
-  Empty,
   Avatar,
-  Switch,
   Tooltip,
   Space,
-  Card,
   Select,
   Modal,
   TreeSelect,
-  Popover,
-  Segmented,
-  Checkbox,
   Tag,
   message,
 } from "antd";
@@ -25,7 +19,7 @@ import {
   UserOutlined,
   StopOutlined,
   ExperimentOutlined,
-  BulbOutlined,
+  SmileOutlined,
   PlusOutlined,
   PictureOutlined,
   FileOutlined,
@@ -33,7 +27,7 @@ import {
   CopyOutlined,
   LoadingOutlined,
   PaperClipOutlined,
-  GlobalOutlined,
+  FileTextOutlined,
   SaveOutlined,
 } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
@@ -43,6 +37,7 @@ import CitationView, { type CitationClickInfo } from "../CitationView";
 import RetrievalDebugPanel from "../RetrievalDebugPanel";
 import AgentToolLog from "../AgentToolLog";
 import { buildCategorySelectTree } from "../CategoryTree";
+import InputPlusPopover, { type InputSourceValue } from "../InputPlusPopover";
 import {
   chatApi,
   knowledgeBaseApi,
@@ -53,20 +48,6 @@ import {
   type TreeData,
 } from "../../services/api";
 import styles from "./index.module.less";
-
-const RAG_PROMPT_SUGGESTIONS = [
-  "这篇文档的主要内容是什么？",
-  "帮我总结一下文档中的关键要点",
-  "文档中提到了哪些重要概念？",
-  "请根据文档内容回答：核心结论是什么？",
-];
-
-const PLAIN_PROMPT_SUGGESTIONS = [
-  "帮我解释一下什么是机器学习",
-  "写一段 Python 快速排序代码",
-  "今天心情不好，给我讲个笑话吧",
-  "帮我翻译：Hello, how are you?",
-];
 
 interface PendingFile {
   filename: string;
@@ -94,10 +75,10 @@ interface Props {
 }
 
 /**
- * 对话框
- * 普通对话：isPlainChat 为 true，正常发送；隐藏 HyDE/调试按钮；提示语为通用聊天建议
- * @param param0
- * @returns
+ * 对话框（P0-4 第四轮 T2 乐享化）：
+ * 空态 = 乐享式欢迎页（笑脸 + 「今天从哪里开始?」），隐藏顶栏；
+ * 有消息后显示顶栏（新对话/调试）+ 消息流 + 底部输入区。
+ * 信息源/深度思考/联网搜索全部收进输入区「+」弹层（InputPlusPopover 公共组件）。
  */
 export default function ChatWindow({
   knowledgeBaseId,
@@ -111,10 +92,12 @@ export default function ChatWindow({
   const [useHyde, setUseHyde] = useState(false);
   const [useWebSearch, setUseWebSearch] = useState(false);
   const [useAgentMode, setUseAgentMode] = useState(false); // P0-3a：Agent 模式开关（默认关，实验性入口；P0-4 第二轮入口移入「+」弹层）
-  // P0-4 第二轮：信息源多选（默认当前库；空数组 = 普通聊天；多选走后端多库合并链）
-  const [sourceKbIds, setSourceKbIds] = useState<number[]>(
-    knowledgeBaseId ? [knowledgeBaseId] : []
-  );
+  // P0-4 第四轮（T3）：信息源状态收敛为 InputSourceValue（当前文档与库互斥；勾选为空 = 纯直聊）
+  const [source, setSource] = useState<InputSourceValue>({
+    docSelected: false,
+    kbIds: knowledgeBaseId ? [knowledgeBaseId] : [],
+  });
+  // 知识库列表（供信息源 tags 显示库名；打开弹层时刷新）
   const [allKbs, setAllKbs] = useState<KnowledgeBase[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
@@ -138,7 +121,7 @@ export default function ChatWindow({
 
   const effectiveKbId = knowledgeBaseId ?? 0; // 普通聊天用 0 作为 kb_id
 
-  // P0-4 第二轮：信息源面板数据（打开弹层时懒加载，避免冗余请求）
+  // P0-4：知识库列表加载（打开弹层时刷新，供信息源 tags 显示库名）
   const loadAllKbs = async () => {
     try {
       const { data } = await knowledgeBaseApi.list();
@@ -210,8 +193,8 @@ export default function ChatWindow({
 
   useEffect(() => {
     setMessages([]);
-    // P0-4 第二轮：切换页签库时信息源重置为当前库（普通聊天页签则清空）
-    setSourceKbIds(knowledgeBaseId ? [knowledgeBaseId] : []);
+    // P0-4 第四轮：切换知识库时信息源重置为当前库
+    setSource({ docSelected: false, kbIds: knowledgeBaseId ? [knowledgeBaseId] : [] });
 
     const loadHistory = async () => {
       setHistoryLoading(true);
@@ -341,7 +324,7 @@ export default function ChatWindow({
     await sse.send({
       // P0-4 第二轮：会话挂主信息源（第一个选中库）；Agent 模式仅作用主信息源（不传 ids）
       knowledgeBaseId: primaryKbId,
-      knowledgeBaseIds: !useAgentMode && isMultiKb ? sourceKbIds : undefined,
+      knowledgeBaseIds: !useAgentMode && isMultiKb ? source.kbIds : undefined,
       question,
       conversationId: sse.conversationId ?? undefined,
       useHyde: isMultiKb ? false : useHyde, // 多库合并链不支持 HyDE（需求 §8.3）
@@ -439,90 +422,55 @@ export default function ChatWindow({
     }
   };
 
-  // P0-4 第二轮：是否普通聊天由信息源选择驱动（清空信息源 = 普通聊天）
-  const isPlainChat = sourceKbIds.length === 0;
-  const isMultiKb = sourceKbIds.length > 1;
-  const primaryKbId = sourceKbIds[0] ?? null;
+  // P0-4 第四轮：信息源语义（勾选为空 = 纯直聊/原普通聊天；主聊天窗无文档信息源）
+  const isPlainChat = source.kbIds.length === 0;
+  const isMultiKb = source.kbIds.length > 1;
+  const primaryKbId = source.kbIds[0] ?? null;
+  // 乐享式空态：无消息且非加载中 → 欢迎页（隐藏顶栏与消息流空态）
+  const isEmptyHome = messages.length === 0 && !sse.loading && !historyLoading;
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <Typography.Title level={5} style={{ margin: 0 }}>
-          <RobotOutlined style={{ marginRight: 8 }} />
-          {isPlainChat ? "普通聊天" : knowledgeBaseName || "智能问答"}
-        </Typography.Title>
-        <Space>
-          {/* P0-4 第二轮：Agent 模式开关移入输入区「+」弹层（问答/Agent 切换），原头部开关移除 */}
-          <Tooltip title="新建对话（清除上下文，节省 Token）">
-            <Button
-              icon={<PlusOutlined />}
-              size="small"
-              onClick={() => {
-                setMessages([]);
-                sse.setConversationId(null);
-              }}
-              disabled={sse.loading || messages.length === 0}
-            >
-              新对话
-            </Button>
-          </Tooltip>
-          {!isPlainChat && (
-            <Tooltip title={isMultiKb ? "多信息源模式不支持 HyDE" : "HyDE 假想文档检索（实验性，双倍Token）"}>
-              <Switch
-                checkedChildren="HyDE"
-                unCheckedChildren="标准"
-                checked={useHyde}
-                onChange={setUseHyde}
-                size="small"
-                disabled={isMultiKb}
-              />
-            </Tooltip>
-          )}
-          {!isPlainChat && !isMultiKb && (
-            <Tooltip title="显示检索调试信息">
+      {/* P0-4 第四轮（T2）：空态（乐享欢迎页）不渲染顶栏；HyDE 开关已移入「+」弹层（深度思考） */}
+      {!isEmptyHome && (
+        <div className={styles.header}>
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            <RobotOutlined style={{ marginRight: 8 }} />
+            {knowledgeBaseName || "问AI"}
+          </Typography.Title>
+          <Space>
+            <Tooltip title="新建对话（清除上下文，节省 Token）">
               <Button
-                type={showDebug ? "primary" : "default"}
-                icon={<ExperimentOutlined />}
+                icon={<PlusOutlined />}
                 size="small"
-                onClick={() => setShowDebug(!showDebug)}
-              />
+                onClick={() => {
+                  setMessages([]);
+                  sse.setConversationId(null);
+                }}
+                disabled={sse.loading || messages.length === 0}
+              >
+                新对话
+              </Button>
             </Tooltip>
-          )}
-        </Space>
-      </div>
+            {!isPlainChat && !isMultiKb && (
+              <Tooltip title="显示检索调试信息">
+                <Button
+                  type={showDebug ? "primary" : "default"}
+                  icon={<ExperimentOutlined />}
+                  size="small"
+                  onClick={() => setShowDebug(!showDebug)}
+                />
+              </Tooltip>
+            )}
+          </Space>
+        </div>
+      )}
 
       <div className={styles.messageList}>
-        {messages.length === 0 && (
-          <div className={styles.promptGuide}>
-            <BulbOutlined
-              style={{ fontSize: 32, color: "#1677ff", marginBottom: 12 }}
-            />
-            <Typography.Text
-              type="secondary"
-              style={{ marginBottom: 16, display: "block" }}
-            >
-              {knowledgeBaseId
-                ? "基于知识库问答，试试这样提问："
-                : "当前为普通聊天模式，可以问我任何问题："}
-            </Typography.Text>
-            <div className={styles.promptCards}>
-              {(knowledgeBaseId
-                ? RAG_PROMPT_SUGGESTIONS
-                : PLAIN_PROMPT_SUGGESTIONS
-              ).map((prompt, index) => (
-                <Card
-                  key={index}
-                  size="small"
-                  hoverable
-                  className={styles.promptCard}
-                  onClick={() => {
-                    setInputValue(prompt);
-                  }}
-                >
-                  <Typography.Text>{prompt}</Typography.Text>
-                </Card>
-              ))}
-            </div>
+        {isEmptyHome && (
+          <div className={styles.emptyHome}>
+            <SmileOutlined className={styles.emptyFace} />
+            <div className={styles.emptyTitle}>今天从哪里开始?</div>
           </div>
         )}
         {messages.map((msg, index) => (
@@ -677,38 +625,35 @@ export default function ChatWindow({
             ))}
           </div>
         )}
-        {isPlainChat && (
-          <div className={styles.inputToolbar}>
-            <div
-              className={`${styles.toolbarPill} ${useWebSearch ? styles.toolbarPillActive : ""}`}
-              onClick={() => setUseWebSearch(!useWebSearch)}
-            >
-              <GlobalOutlined />
-              <span>联网搜索</span>
-            </div>
-          </div>
-        )}
-        {isMultiKb && (
+        {/* P0-4 第四轮（T3）：信息源 tags（乐享式，输入框上方；× 可移除，清空 = 直聊） */}
+        {(source.docSelected || source.kbIds.length > 0) && (
           <div className={styles.inputToolbar} style={{ alignItems: "center" }}>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              信息源({sourceKbIds.length})：
-            </Typography.Text>
-            {sourceKbIds.map((id) => {
-              const kb = allKbs.find((k) => k.id === id);
-              return (
-                <Tag
-                  key={id}
-                  closable
-                  onClose={() =>
-                    setSourceKbIds((prev) => prev.filter((x) => x !== id))
-                  }
-                  style={{ marginRight: 0 }}
-                >
-                  {kb?.name ?? `知识库${id}`}
-                </Tag>
-              );
-            })}
-            {useAgentMode && (
+            {source.docSelected && (
+              <Tag
+                closable
+                onClose={() => setSource({ ...source, docSelected: false })}
+                style={{ marginRight: 0 }}
+              >
+                <FileTextOutlined /> 当前文档
+              </Tag>
+            )}
+            {source.kbIds.map((id) => (
+              <Tag
+                key={id}
+                closable
+                onClose={() =>
+                  setSource({ ...source, kbIds: source.kbIds.filter((x) => x !== id) })
+                }
+                style={{ marginRight: 0 }}
+              >
+                {/* allKbs 异步加载完成前用 knowledgeBaseName prop 兼底，避免首帧闪烁「知识库N」 */}
+                {allKbs.find((k) => k.id === id)?.name ??
+                  (id === knowledgeBaseId && knowledgeBaseName
+                    ? knowledgeBaseName
+                    : `知识库${id}`)}
+              </Tag>
+            ))}
+            {useAgentMode && source.kbIds.length > 1 && (
               <Typography.Text type="warning" style={{ fontSize: 12 }}>
                 Agent 模式仅检索主信息源
               </Typography.Text>
@@ -727,9 +672,9 @@ export default function ChatWindow({
             }}
             placeholder={
               isPlainChat
-                ? "输入问题，可附带图片或文件进行多模态对话..."
+                ? "基于当前知识库进行提问，shift+enter换行"
                 : isMultiKb
-                ? `已选 ${sourceKbIds.length} 个信息源，输入问题跨库检索...`
+                ? `已选 ${source.kbIds.length} 个信息源，输入问题跨库检索...`
                 : "输入您的问题，按 Enter 发送，Shift+Enter 换行..."
             }
             autoSize={{ minRows: 3, maxRows: 6 }}
@@ -737,113 +682,21 @@ export default function ChatWindow({
             className={styles.input}
           />
           <div className={styles.inputActions}>
-            {/* P0-4 第二轮：「+」弹层（乐享式）——问答/Agent 模式切换 + 信息源多选；普通聊天模式下上传入口并入弹层 */}
-            <Popover
+            {/* P0-4 第四轮（T3）：「+」弹层（乐享式公共组件）——模式切换/深度思考/信息源多选 */}
+            <InputPlusPopover
               open={composeOpen}
               onOpenChange={(open) => {
                 setComposeOpen(open);
                 if (open) loadAllKbs();
               }}
-              trigger="click"
-              placement="topLeft"
-              content={
-                <div
-                  style={{
-                    width: 300,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 12,
-                  }}
-                >
-                  <div>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      模式
-                    </Typography.Text>
-                    <div style={{ marginTop: 4 }}>
-                      <Segmented
-                        block
-                        value={useAgentMode ? "agent" : "qa"}
-                        options={[
-                          { label: "问答", value: "qa" },
-                          { label: "Agent", value: "agent" },
-                        ]}
-                        onChange={(v) => setUseAgentMode(v === "agent")}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        信息源（可多选，首个为主信息源）
-                      </Typography.Text>
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{ padding: 0, height: "auto" }}
-                        onClick={() => setSourceKbIds(allKbs.map((kb) => kb.id))}
-                      >
-                        全部知识
-                      </Button>
-                    </div>
-                    <Checkbox.Group
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                        marginTop: 6,
-                        maxHeight: 200,
-                        overflowY: "auto",
-                      }}
-                      value={sourceKbIds}
-                      onChange={(vals) => setSourceKbIds(vals as number[])}
-                    >
-                      {allKbs.map((kb) => (
-                        <Checkbox key={kb.id} value={kb.id}>
-                          {kb.name}
-                          <Typography.Text
-                            type="secondary"
-                            style={{ fontSize: 12, marginLeft: 4 }}
-                          >
-                            ({kb.document_count})
-                          </Typography.Text>
-                        </Checkbox>
-                      ))}
-                    </Checkbox.Group>
-                  </div>
-                  {isPlainChat && (
-                    <Space>
-                      <Button
-                        size="small"
-                        icon={<PaperClipOutlined />}
-                        onClick={handleDocSelect}
-                        disabled={!!pendingFile}
-                      >
-                        上传文件
-                      </Button>
-                      <Button
-                        size="small"
-                        icon={<PictureOutlined />}
-                        onClick={handleImageSelect}
-                      >
-                        上传图片
-                      </Button>
-                    </Space>
-                  )}
-                  <Button
-                    type="primary"
-                    size="small"
-                    onClick={() => setComposeOpen(false)}
-                  >
-                    完成
-                  </Button>
-                </div>
-              }
+              agentMode={useAgentMode}
+              onAgentModeChange={setUseAgentMode}
+              source={source}
+              onSourceChange={setSource}
+              useHyde={useHyde}
+              onHydeChange={setUseHyde}
+              useWebSearch={useWebSearch}
+              onWebSearchChange={setUseWebSearch}
             >
               <Tooltip title="模式与信息源">
                 <Button
@@ -853,7 +706,30 @@ export default function ChatWindow({
                   disabled={sse.loading}
                 />
               </Tooltip>
-            </Popover>
+            </InputPlusPopover>
+            {/* P0-4 第四轮：直聊（未选信息源）时的多模态上传入口 */}
+            {isPlainChat && (
+              <>
+                <Tooltip title="上传文件（文档理解）">
+                  <Button
+                    icon={<PaperClipOutlined />}
+                    size="small"
+                    type="text"
+                    onClick={handleDocSelect}
+                    disabled={!!pendingFile || sse.loading}
+                  />
+                </Tooltip>
+                <Tooltip title="上传图片（多模态）">
+                  <Button
+                    icon={<PictureOutlined />}
+                    size="small"
+                    type="text"
+                    onClick={handleImageSelect}
+                    disabled={sse.loading}
+                  />
+                </Tooltip>
+              </>
+            )}
             {sse.loading ? (
               <Button icon={<StopOutlined />} onClick={sse.abort} danger size="small">
                 停止
@@ -870,6 +746,13 @@ export default function ChatWindow({
             )}
           </div>
         </div>
+        {/* P0-4 第四轮（T2）：乐享式免责声明 */}
+        <Typography.Text
+          type="secondary"
+          style={{ fontSize: 12, textAlign: "center", display: "block", padding: "4px 0 2px" }}
+        >
+          回答内容均由AI生成，仅供参考
+        </Typography.Text>
         <input
           ref={docInputRef}
           type="file"

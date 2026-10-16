@@ -1,10 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Layout, Tabs, Typography } from 'antd';
-import {
-  MessageOutlined, FileMarkdownOutlined, FolderOutlined,
-  BarChartOutlined,
-} from '@ant-design/icons';
+import { Layout } from 'antd';
 import KnowledgeBaseSidebar from '../../components/KnowledgeBaseSidebar';
 import ChatWindow from '../../components/ChatWindow';
 import FeedbackDashboard from '../../components/FeedbackDashboard';
@@ -17,10 +13,12 @@ import { knowledgeBaseApi, type KnowledgeBase, type UserInfo } from '../../servi
 
 const { Sider, Content, Header } = Layout;
 
-// P0-4：文档工作台 tab key（key 与 docId 绑定，tab 可关闭）
-const docTabKey = (docId: number) => `doc-${docId}`;
-// P0-4 第三轮：目录视图 tab key
-const catTabKey = (categoryId: number) => `dir-${categoryId}`;
+// P0-4 第四轮（T1）：主区域单视图（移除 tabs）——问AI / 检索调优(admin) / 目录视图 / 文档工作台
+type MainView =
+  | { type: 'chat' }
+  | { type: 'feedback' }
+  | { type: 'category'; id: number; name: string }
+  | { type: 'doc'; doc: OpenableDoc };
 
 interface Props {
   user: UserInfo;
@@ -28,7 +26,11 @@ interface Props {
 }
 
 /**
- * 主界面（路由 "/"）：乐享式左导航 + editable-card Tabs（问AI/文档管理/检索调优/文档工作台）。
+ * 主界面（路由 "/"）：乐享式左导航 + 主区域单视图（第四轮 T1：移除顶部 tabs，对齐乐享）。
+ * - 问AI 页：ChatWindow（空态=乐享欢迎页「今天从哪里开始?」）
+ * - 目录视图：CategoryView（点目录进入，点文档切文档视图，头部关闭返回）
+ * - 文档工作台：DocumentWorkbench（左正文 + 右问AI 面板，头部关闭返回）
+ * - 不支持同时打开多个文档（点树即替换）
  * 登录门控由 App 层处理，本组件保证 user 非空。
  */
 export default function MainPage({ user, onLogout }: Props) {
@@ -38,12 +40,10 @@ export default function MainPage({ user, onLogout }: Props) {
     const saved = localStorage.getItem('selectedKB');
     return saved ? JSON.parse(saved) : null;
   });
-  const [activeTab, setActiveTab] = useState('chat');
+  // P0-4 第四轮（T1）：单视图状态（替代原 activeTab/openDocs/openCategories 多 tab 体系）
+  const [view, setView] = useState<MainView>({ type: 'chat' });
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
-  const [openDocs, setOpenDocs] = useState<OpenableDoc[]>([]); // P0-4：已打开的文档工作台 tabs
-  // P0-4 第三轮：已打开的目录视图 tabs（点击目录树目录 → 打开目录视图，替代文档管理 tab）
-  const [openCategories, setOpenCategories] = useState<{ id: number; name: string }[]>([]);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerCitation, setViewerCitation] = useState<CitationClickInfo>({ filename: '', page: 0, snippet: '' });
 
@@ -84,7 +84,7 @@ export default function MainPage({ user, onLogout }: Props) {
         if (savedKB?.id && kbs.some((kb) => kb.id === savedKB.id)) {
           return; // 恢复的知识库仍可见，保持不动
         }
-        setSelectedKB(kbs[0] ?? null); // 不可见则回退到第一个可见 KB，无则普通聊天
+        setSelectedKB(kbs[0] ?? null); // 不可见则回退到第一个可见 KB
       } catch {
         setSelectedKB(null);
       }
@@ -94,65 +94,33 @@ export default function MainPage({ user, onLogout }: Props) {
   const userRole = user?.is_admin ? 'owner' : 'member';
   const canManageDocs = userRole === 'owner' || userRole === 'member';
 
-  const isPlainChat = !selectedKB;
-
-  // P0-4：切换知识库 → 清空已打开的文档工作台/目录视图 tabs，回到问答页
+  // P0-4 第四轮（T4）：库切换器仅列知识库（普通聊天 = 问答模式清空信息源）；切库一律回问AI 页
   const handleSelectKB = (kb: KnowledgeBase | null) => {
     setSelectedKB(kb);
-    setOpenDocs([]);
-    setOpenCategories([]);
-    setActiveTab('chat');
+    setView({ type: 'chat' });
   };
 
-  // 普通聊天模式没有文档管理/工作台，强制回到 chat tab
-  useEffect(() => {
-    if (isPlainChat && activeTab !== 'chat') {
-      setActiveTab('chat');
-    }
-  }, [isPlainChat, activeTab]);
-
-  // P0-4：打开文档工作台（同文档去重，仅激活）
+  // 打开文档（单视图：直接替换当前视图）
   const openDoc = (doc: OpenableDoc) => {
-    setOpenDocs((prev) => (prev.some((d) => d.id === doc.id) ? prev : [...prev, doc]));
-    setActiveTab(docTabKey(doc.id));
+    setView({ type: 'doc', doc });
   };
 
-  // P0-4：关闭文档工作台 tab；若关的是当前 tab，切到最后一个未关闭的
-  const closeDoc = (key: string) => {
-    setOpenDocs((prev) => {
-      const next = prev.filter((d) => docTabKey(d.id) !== key);
-      if (activeTab === key) {
-        setActiveTab(next.length > 0 ? docTabKey(next[next.length - 1].id) : 'chat');
-      }
-      return next;
-    });
-  };
-
-  // P0-4 第三轮：目录视图 tab 打开/关闭/改名（同文档 tab 交互）
+  // 打开目录视图
   const openCategory = (categoryId: number, name: string) => {
-    setOpenCategories((prev) =>
-      prev.some((c) => c.id === categoryId) ? prev : [...prev, { id: categoryId, name }]
-    );
-    setActiveTab(catTabKey(categoryId));
+    setView({ type: 'category', id: categoryId, name });
   };
 
-  const closeCategory = (key: string) => {
-    setOpenCategories((prev) => {
-      const next = prev.filter((c) => catTabKey(c.id) !== key);
-      if (activeTab === key) {
-        setActiveTab(next.length > 0 ? catTabKey(next[next.length - 1].id) : 'chat');
-      }
-      return next;
-    });
-  };
-
-  const renameCategoryTab = (categoryId: number, newName: string) => {
-    setOpenCategories((prev) =>
-      prev.map((c) => (c.id === categoryId ? { ...c, name: newName } : c))
+  // 目录 inline 改名 → 同步当前视图标题
+  const renameCategoryView = (categoryId: number, newName: string) => {
+    setView((prev) =>
+      prev.type === 'category' && prev.id === categoryId ? { ...prev, name: newName } : prev
     );
   };
 
-  // P0-4 第二轮：管理页（/spaces）点击在线文档 → location.state 携带 openDoc 跳回主界面打开工作台
+  // 目录在侧栏被删除 / 用户关闭目录视图 → 回问AI 页
+  const closeCategoryView = () => setView({ type: 'chat' });
+
+  // P0-4 第二轮：管理页（/spaces）点击在线文档 → location.state 携带 openDoc 跳回主界面打开
   useEffect(() => {
     const st = location.state as { openDoc?: OpenableDoc } | null;
     if (st?.openDoc) {
@@ -162,72 +130,7 @@ export default function MainPage({ user, onLogout }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
-  const tabItems = [
-    {
-      key: 'chat',
-      label: <span><MessageOutlined /> {isPlainChat ? '普通聊天' : '问AI'}</span>,
-      children: (
-        <div style={{ height: 'calc(100vh - 112px)', overflow: 'hidden' }}>
-          <ChatWindow
-            knowledgeBaseId={selectedKB?.id ?? null}
-            knowledgeBaseName={selectedKB?.name ?? ''}
-            userRole={userRole}
-            onCitationClick={handleCitationClick}
-            onDocSavedToKb={handleDocChanged}
-          />
-        </div>
-      ),
-    },
-    ...(user?.is_admin && !isPlainChat ? [{
-      key: 'feedback',
-      label: <span><BarChartOutlined /> 检索调优</span>,
-      children: (
-        <div style={{ height: 'calc(100vh - 112px)', overflow: 'auto', padding: 16 }}>
-          <FeedbackDashboard knowledgeBaseId={selectedKB?.id ?? null} />
-        </div>
-      ),
-    }] : []),
-    // P0-4 第三轮：动态目录视图 tabs（乐享文件夹页：inline 改名 + 新建/上传 + 子目录/文档列表）
-    ...openCategories.map((cat) => ({
-      key: catTabKey(cat.id),
-      label: <span><FolderOutlined /> {cat.name}</span>,
-      closable: true,
-      children: (
-        <div style={{ height: 'calc(100vh - 112px)', overflow: 'hidden' }}>
-          <CategoryView
-            kbId={selectedKB!.id}
-            categoryId={cat.id}
-            name={cat.name}
-            canManage={canManageDocs}
-            onChanged={handleDocChanged}
-            onOpenDoc={openDoc}
-            onOpenCategory={openCategory}
-            onRenamed={renameCategoryTab}
-            onMissing={() => closeCategory(catTabKey(cat.id))}
-          />
-        </div>
-      ),
-    })),
-    // P0-4：动态文档工作台 tabs（在线文档可编辑，上传文档只读渲染）
-    ...openDocs.map((doc) => ({
-      key: docTabKey(doc.id),
-      label: <span><FileMarkdownOutlined /> {doc.filename}</span>,
-      closable: true,
-      children: (
-        <div style={{ height: 'calc(100vh - 112px)', overflow: 'hidden' }}>
-          <DocumentWorkbench
-            kbId={selectedKB!.id}
-            docId={doc.id}
-            filename={doc.filename}
-            source={doc.source}
-            categoryName={doc.categoryName}
-            onSaved={handleDocChanged}
-            onCitationClick={handleCitationClick}
-          />
-        </div>
-      ),
-    })),
-  ];
+  const goChat = () => setView({ type: 'chat' });
 
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
@@ -243,31 +146,66 @@ export default function MainPage({ user, onLogout }: Props) {
             user={user}
             onLogout={handleLogout}
             canManage={canManageDocs}
-            onGoChat={() => setActiveTab('chat')}
-            chatActive={activeTab === 'chat'}
+            onGoChat={goChat}
+            chatActive={view.type === 'chat'}
             treeRefreshKey={treeRefreshKey}
             onDocChanged={handleDocChanged}
             onOpenDoc={openDoc}
             onOpenCategory={openCategory}
+            onGoFeedback={user?.is_admin ? () => setView({ type: 'feedback' }) : undefined}
+            feedbackActive={view.type === 'feedback'}
+            activeDocId={view.type === 'doc' ? view.doc.id : undefined}
           />
         </Sider>
         <Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <Tabs
-            activeKey={activeTab}
-            onChange={setActiveTab}
-            type="editable-card"
-            hideAdd
-            onEdit={(targetKey, action) => {
-              if (action === 'remove') {
-                const key = String(targetKey);
-                if (key.startsWith('dir-')) closeCategory(key);
-                else closeDoc(key);
-              }
-            }}
-            centered
-            style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-            items={tabItems}
-          />
+          {/* P0-4 第四轮（T1）：单视图渲染（不再用 Tabs；同时只存在一个视图） */}
+          {view.type === 'chat' && (
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <ChatWindow
+                knowledgeBaseId={selectedKB?.id ?? null}
+                knowledgeBaseName={selectedKB?.name ?? ''}
+                userRole={userRole}
+                onCitationClick={handleCitationClick}
+                onDocSavedToKb={handleDocChanged}
+              />
+            </div>
+          )}
+          {view.type === 'feedback' && (
+            <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
+              <FeedbackDashboard knowledgeBaseId={selectedKB?.id ?? null} />
+            </div>
+          )}
+          {view.type === 'category' && selectedKB && (
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <CategoryView
+                kbId={selectedKB.id}
+                categoryId={view.id}
+                name={view.name}
+                canManage={canManageDocs}
+                onChanged={handleDocChanged}
+                onOpenDoc={openDoc}
+                onOpenCategory={openCategory}
+                onRenamed={renameCategoryView}
+                onMissing={closeCategoryView}
+                onClose={goChat}
+              />
+            </div>
+          )}
+          {view.type === 'doc' && selectedKB && (
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <DocumentWorkbench
+                key={`${selectedKB.id}-${view.doc.id}`}
+                kbId={selectedKB.id}
+                docId={view.doc.id}
+                filename={view.doc.filename}
+                source={view.doc.source}
+                categoryName={view.doc.categoryName}
+                onSaved={handleDocChanged}
+                onCitationClick={handleCitationClick}
+                onClose={goChat}
+              />
+            </div>
+          )}
         </Content>
       </Layout>
       <DocumentViewer

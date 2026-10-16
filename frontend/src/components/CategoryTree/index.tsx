@@ -81,6 +81,8 @@ interface Props {
   /** P0-4 第三轮：点击目录 → 主区域打开目录视图 tab */
   onOpenCategory?: (categoryId: number, name: string) => void;
   onDocChanged?: () => void;
+  /** P0-4 第四轮（T5）：打开文档的树选中态（高亮+自动展开所在目录；/spaces 管理页不传即无选中态） */
+  activeDocId?: number;
   /** 顶部「目录」标题行（主界面乐享式；/spaces 管理页自带标题，传 false 关闭） */
   showHeader?: boolean;
 }
@@ -94,6 +96,7 @@ type ModalMode = "newDoc" | "newCat" | "renameCat" | "renameDoc";
  * - 目录节点菜单：新建文档 / 新建子目录 / 重命名 / 删除（文档移根）；目录名可点击 → 目录视图
  * - 文档节点菜单：仅 重命名 / 删除（用户批注「保留重命名删除即可」）
  * - 多选模式：节点前 Checkbox（目录+文档），顶部操作条仅 批量删除（用户批注「只要删除即可」）
+ * - 第四轮（T5）：打开文档 → 节点蓝底高亮 + 自动展开所在目录并滚动到可见（/spaces 不传 activeDocId 无选中态）
  */
 export default function CategoryTree({
   kbId,
@@ -102,6 +105,7 @@ export default function CategoryTree({
   onOpenDoc,
   onOpenCategory,
   onDocChanged,
+  activeDocId,
   showHeader = true,
 }: Props) {
   const [categories, setCategories] = useState<CategoryInfo[]>([]);
@@ -113,6 +117,8 @@ export default function CategoryTree({
   const [checkedDocs, setCheckedDocs] = useState<Set<number>>(new Set());
   const [checkedCats, setCheckedCats] = useState<Set<number>>(new Set());
 
+  // P0-4 第四轮（T5）：滚动定位选中节点用
+  const containerRef = useRef<HTMLDivElement>(null);
   // P0-4 v1.2：上传自足（「目录」行「+」菜单 → 上传文件；隐藏 input 选文件 → UploadModal 浮层，挂根目录）
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
@@ -144,6 +150,29 @@ export default function CategoryTree({
     fetchTree();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbId, refreshKey]);
+
+  // P0-4 第四轮（T5）：打开文档 → 自动展开其所在目录链（含「未归类」）并滚动到可见
+  useEffect(() => {
+    if (activeDocId == null) return;
+    const doc = documents.find((d) => d.id === activeDocId);
+    if (!doc) return;
+    const chain: React.Key[] = [];
+    let parentId: number | null = doc.category_id;
+    const guard = new Set<number>();
+    while (parentId != null && !guard.has(parentId)) {
+      guard.add(parentId);
+      chain.push(`cat-${parentId}`);
+      parentId = categories.find((c) => c.id === parentId)?.parent_id ?? null;
+    }
+    if (doc.category_id == null) chain.push("uncategorized");
+    setExpandedKeys((prev) => Array.from(new Set([...prev, ...chain])));
+    const timer = setTimeout(() => {
+      containerRef.current
+        ?.querySelector(`[data-doc-id="${activeDocId}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [activeDocId, documents, categories]);
 
   const catName = (id: number | null) =>
     id == null ? "未归类" : categories.find((c) => c.id === id)?.name ?? "未归类";
@@ -222,7 +251,8 @@ export default function CategoryTree({
           />
         )}
         <span
-          className={styles.nodeLabel}
+          className={`${styles.nodeLabel} ${activeDocId === d.id ? styles.nodeLabelActive : ""}`}
+          data-doc-id={d.id}
           onClick={() =>
             // P0-4 第三轮（T7）：上传文档也开 doc tab（只读正文），不再走 Modal 查看器
             onOpenDoc({
@@ -469,7 +499,7 @@ export default function CategoryTree({
   }
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} ref={containerRef}>
       {showHeader && (
         <div className={styles.treeHeader}>
           <span className={styles.treeHeaderTitle}>

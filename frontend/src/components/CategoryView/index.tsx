@@ -22,6 +22,7 @@ import {
   FileAddOutlined,
   FolderAddOutlined,
   RightOutlined,
+  CloseOutlined,
 } from "@ant-design/icons";
 import {
   categoryApi,
@@ -49,6 +50,10 @@ interface Props {
   onRenamed?: (categoryId: number, newName: string) => void;
   /** 目录已在侧栏被删除 → 外层关闭本 tab */
   onMissing?: () => void;
+  /** P0-4 第四轮（T1）：单视图模式关闭目录视图 → 回问AI 页 */
+  onClose?: () => void;
+  /** P0-4 第四轮（T5）：打开文档的行选中态高亮（单视图下与目录视图互斥，契约保留） */
+  activeDocId?: number;
 }
 
 /**
@@ -67,6 +72,8 @@ export default function CategoryView({
   onOpenCategory,
   onRenamed,
   onMissing,
+  onClose,
+  activeDocId,
 }: Props) {
   const [categories, setCategories] = useState<CategoryInfo[]>([]);
   const [documents, setDocuments] = useState<TreeNodeDocument[]>([]);
@@ -305,6 +312,11 @@ export default function CategoryView({
             </Button>
           </span>
         )}
+        {onClose && (
+          <Tooltip title="关闭目录视图，回到问AI">
+            <Button size="small" icon={<CloseOutlined />} onClick={onClose} style={{ marginLeft: 8 }} />
+          </Tooltip>
+        )}
       </div>
 
       {/* 内容：子目录 + 文档 行式列表 */}
@@ -342,7 +354,7 @@ export default function CategoryView({
           {directDocs.map((d) => (
             <div
               key={d.id}
-              className={styles.row}
+              className={`${styles.row} ${activeDocId === d.id ? styles.rowActive : ""}`}
               onClick={() =>
                 // P0-4 第三轮（T7）：上传文档也开 doc tab（只读正文），不再走 Modal 查看器
                 onOpenDoc({

@@ -26,6 +26,7 @@ import {
   SettingOutlined,
   ToolOutlined,
   HistoryOutlined,
+  BarChartOutlined,
 } from "@ant-design/icons";
 import CategoryTree, { type OpenableDoc } from "../CategoryTree";
 import {
@@ -47,6 +48,11 @@ interface Props {
   /** 导航「问AI」→ 主区域切回问答 tab */
   onGoChat: () => void;
   chatActive: boolean;
+  /** P0-4 第四轮（T4）：管理员「检索调优」导航 → 主区域切检索调优视图 */
+  onGoFeedback?: () => void;
+  feedbackActive?: boolean;
+  /** P0-4 第四轮（T5）：打开文档 id 透传目录树（选中态高亮+自动展开） */
+  activeDocId?: number;
   treeRefreshKey?: number;
   onDocChanged?: () => void;
   onOpenDoc: (doc: OpenableDoc) => void;
@@ -55,9 +61,10 @@ interface Props {
 }
 
 /**
- * P0-4 乐享式左侧导航（v1.2 修订）：
- * 库切换器 → 导航（问AI / 知识地图(P1) / 主页(P1)）→ 历史对话列表（常驻侧栏，随选中库拉取）→
- * 目录树（新建/上传收拢到目录树「目录」行与节点「···」菜单内，本组件不再承载）→ 底部用户卡。
+ * P0-4 乐享式左侧导航（第四轮 v1.3 修订）：
+ * 库切换器（仅列知识库，「普通聊天」选项移除=问答模式清空信息源）→ 导航（问AI / 知识地图(P1) / 主页(P1) / 检索调优(admin)）→
+ * 历史对话列表（常驻侧栏，随选中库拉取；kb=0 旧普通聊天会话不可见，迁移 P1）→
+ * 目录树（新建/上传收拢到目录树「目录」行与节点「···」菜单内；打开文档选中态高亮）→ 底部用户卡。
  * 跨组件联动走轻量 CustomEvent 总线：
  * - p04:conv-switch   侧栏 → 聊天窗：切换会话
  * - p04:conv-active   聊天窗 → 侧栏：当前活跃会话高亮
@@ -73,6 +80,9 @@ export default function KnowledgeBaseSidebar({
   canManage,
   onGoChat,
   chatActive,
+  onGoFeedback,
+  feedbackActive,
+  activeDocId,
   treeRefreshKey,
   onDocChanged,
   onOpenDoc,
@@ -101,9 +111,14 @@ export default function KnowledgeBaseSidebar({
     }
   };
 
+  // P0-4 第四轮（T4）：历史对话仅列当前选中库（kb=0 旧普通聊天会话不再可见，迁移 P1）
   const fetchConversations = async () => {
+    if (!selectedId) {
+      setConversations([]);
+      return;
+    }
     try {
-      const { data } = await chatApi.listConversations(selectedId ?? 0);
+      const { data } = await chatApi.listConversations(selectedId);
       setConversations(data);
     } catch {
       /* ignore */
@@ -185,18 +200,15 @@ export default function KnowledgeBaseSidebar({
     <div className={styles.sidebar}>
       {/* 顶部：库切换器 + 新建 + 管理 */}
       <div className={styles.kbSwitcher}>
+        {/* P0-4 第四轮（T4）：仅列知识库，左上角始终显示库名（普通聊天=问答模式清空信息源） */}
         <Select
           className={styles.kbSelect}
           size="small"
-          value={selectedId ?? 0}
+          value={selectedId}
+          placeholder="选择知识库"
           loading={loading}
-          onChange={(v) =>
-            onSelect(v === 0 ? null : knowledgeBases.find((kb) => kb.id === v) ?? null)
-          }
-          options={[
-            { value: 0, label: "普通聊天" },
-            ...knowledgeBases.map((kb) => ({ value: kb.id, label: kb.name })),
-          ]}
+          onChange={(v) => onSelect(knowledgeBases.find((kb) => kb.id === v) ?? null)}
+          options={knowledgeBases.map((kb) => ({ value: kb.id, label: kb.name }))}
         />
         <Tooltip title="新建知识库">
           <Button size="small" icon={<PlusOutlined />} onClick={() => setModalOpen(true)} />
@@ -253,6 +265,15 @@ export default function KnowledgeBaseSidebar({
             <HomeOutlined className={styles.navIcon} /> 主页
           </div>
         </Tooltip>
+        {/* P0-4 第四轮（T4）：检索调优（tabs 移除后的新入口，仅管理员可见） */}
+        {user.is_admin && onGoFeedback && (
+          <div
+            className={`${styles.navItem} ${feedbackActive ? styles.navActive : ""}`}
+            onClick={onGoFeedback}
+          >
+            <BarChartOutlined className={styles.navIcon} /> 检索调优
+          </div>
+        )}
       </div>
 
       {/* P0-4 v1.2：历史对话列表（常驻侧栏；点击切换会话，hover 删除） */}
@@ -297,7 +318,7 @@ export default function KnowledgeBaseSidebar({
 
       <Divider style={{ margin: "8px 0" }} />
 
-      {/* 目录树（普通聊天无目录） */}
+      {/* 目录树（打开文档选中态：activeDocId 透传） */}
       <div className={styles.treeWrap}>
         {selectedId ? (
           <CategoryTree
@@ -307,13 +328,14 @@ export default function KnowledgeBaseSidebar({
             onOpenDoc={onOpenDoc}
             onOpenCategory={onOpenCategory}
             onDocChanged={onDocChanged}
+            activeDocId={activeDocId}
           />
         ) : (
           <Typography.Text
             type="secondary"
             style={{ fontSize: 12, padding: "8px 12px", display: "block" }}
           >
-            普通聊天不使用知识库；选择知识库后可在此管理目录与文档。
+            选择知识库后可在此管理目录与文档。
           </Typography.Text>
         )}
       </div>

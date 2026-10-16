@@ -1,6 +1,60 @@
 # P0-4 乐享式知识库最小 demo — changelog
 
-> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8；v1.2 增补第三轮 §9）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）/ `0b76011`（第三轮）
+> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8；v1.2 增补第三轮 §9；v1.3 增补第四轮 §10）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）/ `0b76011`（第三轮）/ `39745f9`（第四轮）
+
+## 第四轮：主区域单视图 + 问AI 输入区对齐乐享（2026-10-16）
+
+按需求 §10（v1.3）实施：基线 commit `39745f9` → T3 InputPlusPopover 公共弹层 → T2 空态页+ChatWindow 顶栏简化 → T6 DocChatPanel 输入区化 → T1 MainPage 单视图 → T5 树选中态 → T4 库切换器 → 验收。**纯前端改动，后端 `backend/` 全量 diff 为空（本轮零改动），RAG 禁区五文件 diff 为空，全程零新增 LLM 调用。**
+
+### 改动文件清单（全部前端）
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/InputPlusPopover/` | 新建（tsx 241 行 + less 159 行）：输入区「+」公共弹层——导出 `InputSourceValue{docSelected,kbIds}` 与 `EMPTY_SOURCE`；一级弹层（问答/Agent Segmented + 深度思考 Switch=HyDE 映射 + 技能置灰占位「敬请期待」+ 信息源行带数量 badge）；二级 hover 弹层（全网搜索 Switch 仅直聊可用 + 知识范围多选：全部知识/各库 Checkbox/当前文档项）；open 时懒加载 allKbs；ChatWindow 与 DocChatPanel 同构复用（唯一真相源） |
+| `frontend/src/components/ChatWindow/` | 空态页（笑脸+「今天从哪里开始?」+输入区，隐藏 header）；HyDE Switch 从顶栏移入弹层（顶栏简化）；旧「+」Popover 116 行拆除接入 InputPlusPopover；信息源 tags 统一入输入框上方（可×移除，空=纯直聊）；placeholder 与免责行「回答内容均由AI生成，仅供参考」；tag 名 allKbs 异步加载前用 knowledgeBaseName prop 兼底防闪烁 |
+| `frontend/src/components/DocChatPanel/` | 输入区化重写：顶部仅「问AI」；信息源入输入区（source 默认 `{docSelected:true,kbIds:[]}`）；InputPlusPopover 接入（showModeSegment=false，仅问答模式）；handleSend 三态（当前文档=documentId / 多库=knowledgeBaseIds / 空=直聊）；换文档重置默认勾选；免责行 |
+| `frontend/src/pages/MainPage/` | 单视图重构：删 Tabs/openDocs/openCategories/activeTab 体系，`MainView` 四态 union（chat/feedback/category/doc）；不支持多开文档（点树即替换）；Workbench key=`${kbId}-${docId}` 强制重建；CategoryView/Workbench 加关闭回问AI；Sidebar 传 onGoFeedback/feedbackActive/activeDocId |
+| `frontend/src/components/KnowledgeBaseSidebar/` | 库切换器移除「普通聊天」选项（仅列知识库，左上角始终库名）；导航增「检索调优」（仅 admin，tabs 移除后 FeedbackDashboard 新入口）；历史对话仅列当前选中库（kb=0 旧会话不可见，迁移 P1）；树区空态文案更新；activeDocId 透传 CategoryTree |
+| `frontend/src/components/CategoryTree/` | 树选中态：activeDocId 可选 prop（/spaces 不传隔离）；文档节点蓝底高亮（自定义 nodeLabelActive 类）；activeDocId 变化自动展开所在目录链（含未归类）+ scrollIntoView 滚动到可见 |
+| `frontend/src/components/CategoryView/` | onClose 关闭按钮（回问AI）；activeDocId 文档行高亮（单视图互斥下契约保留） |
+| `frontend/src/components/DocumentWorkbench/` | onClose 关闭按钮（回问AI） |
+
+### 关键设计摘要
+
+- **InputSourceValue 统一信息源模型**：`{docSelected, kbIds}`，docSelected 与 kbIds 互斥（后端 document_id 优先，UI 强制互斥保证行为可预期）；**空 = 纯直聊**（=原普通聊天，kb=0 路径）；tags 渲染在输入框上方可逐个移除
+- **深度思考开关 = 现有 HyDE 映射**（复用 use_hyde 参数，不新建后端能力）；`hydeDisabled = agentMode || docSelected || kbIds.length > 1`；全网搜索仅直聊可用（后端 web_search 链仅直聊路径处理）
+- **MainView union 替代 Tabs**：`{type:'chat'|'feedback'|'category'|'doc'}` 条件渲染单视图；目录视图作为主区域临时视图（关闭回问AI）；命名联动 renameCategoryView/onMissing 保留
+- **树选中态自定义高亮**：antd Tree `selectable={false}` 下受控 selectedKeys 不渲染选中样式（rc-tree 节点级 selectable 短路），故用 nodeLabel 自定义类方案；activeDocId 展开目录链用 guard Set 防环
+- **「普通聊天」语义退役**：问答模式清空信息源 = 直聊（用户定调「问答模式其实就相当于是普通聊天」）；库切换器左上角始终显示库名
+
+### 验收结果（需求 §10.3 对照）
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | 无 tabs，三态单视图 | ✅ DOM 快照：空态/文档视图两态 main 区域均无 tab 组件 |
+| 2 | 空态页 | ✅ 笑脸+「今天从哪里开始?」+大输入框+免责行；无卡片/换一换/Workbuddy |
+| 3 | 输入区弹层 | ✅ Segmented+深度思考+信息源（数量1）；二级=全网搜索（非直聊置灰✓）+范围多选（全部知识/各库，当前库默认勾） |
+| 4 | 信息源 tags | ✅ 当前库 tag 常显可×；空=纯直聊；首帧库名闪烁已修 |
+| 5 | 树选中态 | ✅ activeDocId 高亮+自动展开+滚动（代码路径+tsc 保障；视觉截图受环境限制见「遇到的问题」） |
+| 6 | 右面板 | ✅ 顶部仅「问AI」；信息源交互入输入区 |
+| 7 | 普通聊天 | ✅ 库切换器无「普通聊天」；检索调优对非 admin 隐藏（is_admin=False 实测）符合设计 |
+| 8 | 质量门 | ✅ tsc -b 零错误 / py_compile 全过 / 禁区五文件+backend 全量 diff 空 / 冒烟全量 46 断言绿 |
+
+### 遇到的问题
+
+1. **MainPage→Sidebar 传 onGoFeedback 报 Props 不存在**：单视图重构先写 MainPage、Sidebar 改造后置导致的顺序性报错，T4 落地即消（预期内）
+2. **CategoryView 块内 `view.type === 'doc'` TS 窄化报「无重叠」**：`view.type === 'category' && ...` 块内 view 已窄化为 category；单视图互斥下 activeDocId 恒空，调用侧不传（组件侧可选 prop 契约保留）
+3. **JSX props 位置放 `{/* */}` 注释报语法错**：props 位置不支持 JSX 注释，删除注释改由代码注释承载
+4. **信息源 tag 首帧闪「知识库N」**：tag 名查 allKbs（异步），加载完成前走 fallback；补 knowledgeBaseName prop 次级兼底（浏览器快照实测发现）
+5. **环境杂音**：zsh `app/*.py` glob 无匹配（后端在 backend/ 下）；`python` 命令不存在用 `python3`；项目根 `npx tsc` 误装同名废弃包（须在 frontend/ 下跑）
+6. **浏览器截图不可用**：take_screenshot 报 NATIVE_BROWSER_VIEWPORT_UNAVAILABLE（视口隐藏，环境限制非应用问题）；以 13 次 a11y DOM 快照替代验证全部交互点
+
+### 遗留事项（P1）
+
+- kb=0 旧普通聊天会话不可见（存量迁移脚本 P1）
+- 技能体系（真技能卡）/真 reasoning 深度思考/知识概览 AI 摘要卡/推荐问题卡片/Workbuddy → 需求声明不做（P1）
+- CategoryView activeDocId 契约保留未使用（若「关闭文档回目录视图」需求出现即启用）
+- 树选中态视觉截图未留档（环境限制；DOM 快照已验证结构与类名逻辑）
 
 ## 第三轮：文件管理收拢 + 文档 tab 内嵌问AI（2026-10-15）
 
