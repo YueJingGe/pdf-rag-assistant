@@ -22,7 +22,12 @@ import {
 } from "@ant-design/icons";
 import CategoryTree from "../../components/CategoryTree";
 import DocumentUpload from "../../components/DocumentUpload";
-import { knowledgeBaseApi, type KnowledgeBase, type UserInfo } from "../../services/api";
+import {
+  knowledgeBaseApi,
+  PERSONAL_KB_NAME,
+  type KnowledgeBase,
+  type UserInfo,
+} from "../../services/api";
 import styles from "./index.module.less";
 
 const { Sider, Content, Header } = Layout;
@@ -151,17 +156,20 @@ export default function SpacesPage({ user }: Props) {
               { key: "recycle", icon: <DeleteOutlined />, label: "回收站", disabled: true },
             ]}
           />
-          <Popconfirm
-            title="删除该知识库？"
-            description="将同时删除库内文档与向量索引，不可恢复。"
-            okText="删除"
-            okButtonProps={{ danger: true }}
-            onConfirm={handleDeleteKb}
-          >
-            <Button danger type="text" size="small" icon={<DeleteOutlined />} className={styles.deleteBtn}>
-              删除知识库
-            </Button>
-          </Popconfirm>
+          {/* P0-4 第五轮（T1）：个人知识库不可删除（识别锚点见 api.ts），隐藏删除按钮 */}
+          {kb.name !== PERSONAL_KB_NAME && (
+            <Popconfirm
+              title="删除该知识库？"
+              description="将同时删除库内文档与向量索引，不可恢复。"
+              okText="删除"
+              okButtonProps={{ danger: true }}
+              onConfirm={handleDeleteKb}
+            >
+              <Button danger type="text" size="small" icon={<DeleteOutlined />} className={styles.deleteBtn}>
+                删除知识库
+              </Button>
+            </Popconfirm>
+          )}
         </Sider>
         <Content className={styles.content}>
           {menuKey === "basic" ? (

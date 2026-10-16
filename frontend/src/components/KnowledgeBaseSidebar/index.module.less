@@ -17,6 +17,43 @@
   min-width: 0;
 }
 
+/* P0-4 第五轮（T2）：新建对话按钮（问AI 上方，对齐乐享：整宽浅底圆角） */
+.newConvBtn {
+  margin: 8px 4px 4px;
+  border-radius: 8px;
+  border-color: #e5e5e5;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  font-size: 13px;
+  height: 32px;
+}
+
+/* P0-4 第五轮（T3）：历史对话折叠箭头（展开旋转 90°） */
+.historyCaret {
+  font-size: 10px;
+  color: #999;
+  transition: transform 0.2s;
+}
+
+.historyCaretOpen {
+  transform: rotate(90deg);
+}
+
+.historyTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #999;
+  padding: 6px 10px 4px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    color: #666;
+  }
+}
+
+/* 导航项（问AI / 知识地图 / 主页 / 检索调优）——第四轮 v1.3 样式沿用 */
 .nav {
   padding: 0 8px;
 }
@@ -60,27 +97,12 @@
   }
 }
 
-.treeWrap {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-
-/* P0-4 v1.2：历史对话列表（常驻侧栏，问AI导航下方） */
+/* P0-4 v1.2：历史对话列表（问AI 导航下方；第五轮 T3 起默认收起） */
 .historyBlock {
   padding: 0 8px;
   max-height: 200px;
   overflow: auto;
   flex-shrink: 0;
-}
-
-.historyTitle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #999;
-  padding: 6px 10px 4px;
 }
 
 .historyEmpty {

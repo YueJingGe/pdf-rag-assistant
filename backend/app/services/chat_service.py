@@ -408,3 +408,118 @@ async def doc_rag_stream(
         f"Doc-scoped RAG query completed: kb={kb_id}, doc={document_id}, "
         f"chunks={len(retrieved_docs)}, retrieval={retrieval_time_ms}ms, total={total_time_ms}ms"
     )
+
+
+# ======================== P0-4 第五轮（T6，§11）：多范围信息源（整库 + 文档级多选） ========================
+
+MAX_SCOPE_DOCS = 20  # 文档级多选上限（超出提示按库选；前端同值兜底）
+
+
+async def resolve_doc_scopes(
+    db: AsyncSession, doc_ids: list[int], user: User
+) -> dict[int, list[int]]:
+    """文档级多范围归属解析 + 逐文档权限校验（路由层 SSE 前调用，403/404 不进事件流）。
+
+    返回 {kb_id: [doc_id, ...]}（按库分组，供 multi_scope_retrieve 每库一次检索后过滤）；
+    文档不存在 → 404（防枚举），归属库无读权限 → 403（复用 get_kb_or_raise）。
+    """
+    scopes: dict[int, list[int]] = {}
+    for doc_id in doc_ids:
+        doc = await db.get(Document, doc_id)
+        if not doc:
+            raise NotFoundError("Document not found")
+        await get_kb_or_raise(doc.knowledge_base_id, user, "viewer", db)
+        scopes.setdefault(doc.knowledge_base_id, []).append(doc_id)
+    return scopes
+
+
+async def multi_scope_retrieve(
+    kb_ids: list[int], doc_scopes: dict[int, list[int]], question: str
+) -> list:
+    """多范围检索：整库范围全取候选；文档组范围按 chunk metadata.document_id 过滤。
+
+    复用第二轮多库合并编排（每库一次 retrieve_with_strategy，RRF 分数跨库可比）+
+    第三轮 doc_scoped 后过滤思路——禁区五文件只读引用，零复制零修改。
+    同库整库与文档组并存时整库优先（该库不再做文档过滤）。
+    """
+    scoped_kbs = {kb: set(docs) for kb, docs in doc_scopes.items() if kb not in kb_ids}
+    flat: list = []
+    for kb_id in set(kb_ids) | set(scoped_kbs):
+        candidates = await retrieve_with_strategy(kb_id, question, use_hyde=False)
+        allowed = scoped_kbs.get(kb_id)  # None=整库
+        for doc in candidates:
+            doc.metadata["knowledge_base_id"] = kb_id  # 来源库标记（与 multi_kb 链一致）
+            if allowed is not None and doc.metadata.get("document_id") not in allowed:
+                continue
+            flat.append(doc)
+    merged = sorted(flat, key=lambda d: d.metadata.get("score", 0.0), reverse=True)
+    return _deduplicate_documents(merged)[: settings.retrieval_top_k]
+
+
+async def multi_scope_rag_stream(
+    kb_ids: list[int],
+    doc_scopes: dict[int, list[int]],
+    question: str,
+    chat_history: list[dict] | None = None,
+) -> AsyncIterator[dict]:
+    """多范围信息源流式问答（第五轮 T6）：SSE chunk 协议与 multi_kb_rag_stream 一致
+    （retrieval_debug / token / citations / done），strategy="multi_scope"。
+
+    检索=multi_scope_retrieve（整库 + 文档组混合）；与多库链同样不走 HyDE/语义缓存
+    （需求 §11.2）；生成走 llm_gateway get_llm("rag_generate")。
+    """
+    start_time = time.time()
+    trimmed_history = _trim_chat_history(chat_history)
+    retrieved_docs = await multi_scope_retrieve(kb_ids, doc_scopes, question)
+    retrieval_time_ms = int((time.time() - start_time) * 1000)
+
+    yield {"type": "retrieval_debug", "content": {
+        "chunks": [
+            {"content": doc.page_content, "metadata": doc.metadata}
+            for doc in retrieved_docs
+        ],
+        "retrieval_time_ms": retrieval_time_ms,
+        "strategy": "multi_scope",
+    }}
+
+    context = _format_context(retrieved_docs)
+    citations = _build_citations(retrieved_docs, question)
+    messages = _to_langchain_messages(trimmed_history)
+
+    llm = get_llm("rag_generate", streaming=True)
+    chain = RAG_PROMPT | llm
+
+    kwargs: dict = {
+        "context": context,
+        "chat_history": messages,
+        "question": question,
+    }
+    config: dict = {}
+    langfuse_handler = get_langfuse_handler()
+    if langfuse_handler:
+        config["callbacks"] = [langfuse_handler]
+        langfuse_handler.metadata = {
+            "knowledge_base_ids": kb_ids,
+            "scoped_kb_count": len(doc_scopes),
+            "scoped_doc_count": sum(len(v) for v in doc_scopes.values()),
+            "strategy": "multi_scope",
+            "history_rounds": len(trimmed_history) // 2,
+            "retrieval_time_ms": retrieval_time_ms,
+        }
+
+    full_answer = ""
+    async for chunk in chain.astream(kwargs, config=config):
+        token = chunk.content
+        if token:
+            full_answer += token
+            yield {"type": "token", "content": token}
+
+    total_time_ms = int((time.time() - start_time) * 1000)
+    logger.info(
+        f"Multi-scope RAG query completed: kbs={kb_ids}, "
+        f"scoped_kbs={ {kb: len(docs) for kb, docs in doc_scopes.items()} }, "
+        f"retrieval={retrieval_time_ms}ms, total={total_time_ms}ms"
+    )
+
+    yield {"type": "citations", "content": citations}
+    yield {"type": "done", "content": full_answer}

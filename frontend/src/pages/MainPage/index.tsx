@@ -11,7 +11,8 @@ import type { CitationClickInfo } from '../../components/CitationView';
 import type { OpenableDoc } from '../../components/CategoryTree';
 import { knowledgeBaseApi, type KnowledgeBase, type UserInfo } from '../../services/api';
 
-const { Sider, Content, Header } = Layout;
+// P0-4 第五轮（T4）：移除全局 Header，对齐乐享（无顶部系统标题白条）；Sider/Content 铺满视口
+const { Sider, Content } = Layout;
 
 // P0-4 第四轮（T1）：主区域单视图（移除 tabs）——问AI / 检索调优(admin) / 目录视图 / 文档工作台
 type MainView =
@@ -26,7 +27,8 @@ interface Props {
 }
 
 /**
- * 主界面（路由 "/"）：乐享式左导航 + 主区域单视图（第四轮 T1：移除顶部 tabs，对齐乐享）。
+ * 主界面（路由 "/"）：乐享式左导航 + 主区域单视图（第四轮 T1：移除顶部 tabs，对齐乐享；
+ * 第五轮 T4：移除全局 Header）。
  * - 问AI 页：ChatWindow（空态=乐享欢迎页「今天从哪里开始?」）
  * - 目录视图：CategoryView（点目录进入，点文档切文档视图，头部关闭返回）
  * - 文档工作台：DocumentWorkbench（左正文 + 右问AI 面板，头部关闭返回）
@@ -134,9 +136,6 @@ export default function MainPage({ user, onLogout }: Props) {
 
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden' }}>
-      <Header style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', padding: '0 24px', display: 'flex', alignItems: 'center', height: 56 }}>
-        <span style={{ fontSize: 16, fontWeight: 600 }}>📚 PDF RAG 智能问答系统</span>
-      </Header>
       <Layout style={{ flex: 1, overflow: 'hidden' }}>
         <Sider width={280} style={{ background: '#fff', borderRight: '1px solid #f0f0f0', overflow: 'auto' }}>
           <KnowledgeBaseSidebar

@@ -75,6 +75,7 @@ async def main() -> None:
         print(f"✓ 临时库就绪 kb_id={temp_kb.id}")
 
         temp_kb2 = None
+        temp_kb3 = None
         try:
             # ② 目录管理：新建根目录 A → 子目录 A1 → 重命名
             cat_a = await category_service.create_category(db, user, temp_kb.id, name="前端基础")
@@ -460,11 +461,138 @@ async def main() -> None:
                 "⑭ 空候选 → 「未找到」提示直出（不进 LLM）",
             )
 
+            # ⑮ 多范围信息源（P0-4 第五轮 §11 T6）：整库 + 文档级多选混合 → multi_scope 链
+            # 第三库塞两个在线文档（目标+干扰），与库 1 的 online_doc（标记乙）/interference_doc（标记丁）
+            # 组成「库 1 文档组 + 库 3 整库」混合范围格局
+            temp_kb3 = await kb_service.create_kb(
+                db, user, name="smoke-p04-temp3", description="多范围冒烟临时库", permission="private"
+            )
+            kb3_doc = await document_service.create_online_document(
+                db, user, temp_kb3.id,
+                title="萤火虫攻略", content="# 笔记\n\nP04冒烟标记戊：萤火虫的腹部有发光细胞。\n",
+                category_id=None,
+            )
+            kb3_noise = await document_service.create_online_document(
+                db, user, temp_kb3.id,
+                title="干扰文档三", content="P04冒烟标记己：这份文档仅用于整库范围对照。\n",
+                category_id=None,
+            )
+            _check(
+                kb3_doc.status == "ready" and kb3_noise.status == "ready",
+                "⑮ 第三库两份在线文档入库 ready",
+            )
+
+            # resolve_doc_scopes：跨库文档分组正确
+            scopes_15 = await chat_service.resolve_doc_scopes(
+                db, [online_doc.id, kb3_doc.id], user
+            )
+            _check(
+                set(scopes_15.keys()) == {temp_kb.id, temp_kb3.id}
+                and scopes_15[temp_kb.id] == [online_doc.id],
+                "⑮ resolve_doc_scopes 跨库分组正确",
+            )
+            try:
+                await chat_service.resolve_doc_scopes(db, [999999], user)
+                _check(False, "⑮ 不存在文档应 NotFoundError")
+            except NotFoundError:
+                print("✓ 不存在文档 → NotFoundError（404）")
+            if other:
+                try:
+                    await chat_service.resolve_doc_scopes(
+                        db, [online_doc.id], other
+                    )
+                    _check(False, "⑮ 他人解析私有库文档应 PermissionDeniedError")
+                except PermissionDeniedError:
+                    print("✓ 他人无读权限 → PermissionDeniedError（403，SSE 前拦截）")
+            else:
+                print("⚠ 无其他用户，跳过 ⑮ 权限负例")
+
+            # 混合范围检索：库 1 仅命中指定文档（隔离干扰文档丁）、库 3 整库全取
+            mixed = await chat_service.multi_scope_retrieve(
+                [temp_kb3.id], {temp_kb.id: [online_doc.id]}, "海马 萤火虫 冒烟"
+            )
+            mixed_texts = [d.page_content for d in mixed]
+            _check(
+                any("冒烟标记乙" in t for t in mixed_texts),
+                "⑮ 混合范围命中库 1 指定文档（标记乙）",
+            )
+            _check(
+                not any("冒烟标记丁" in t for t in mixed_texts),
+                "⑮ 文档组隔离：库 1 未选中的干扰文档（标记丁）不出现",
+            )
+            _check(
+                any("冒烟标记戊" in t or "冒烟标记己" in t for t in mixed_texts),
+                "⑮ 混合范围命中库 3 整库候选",
+            )
+            _check(
+                all(
+                    d.metadata.get("knowledge_base_id") in (temp_kb.id, temp_kb3.id)
+                    for d in mixed
+                ),
+                "⑮ 合并结果 metadata 标记来源库",
+            )
+            _check(
+                len(mixed) <= settings.retrieval_top_k,
+                f"⑮ 截断 ≤ retrieval_top_k({settings.retrieval_top_k})",
+            )
+
+            # 纯文档范围（kb_ids 为空）：仅命中指定文档
+            doc_only = await chat_service.multi_scope_retrieve(
+                [], {temp_kb.id: [online_doc.id]}, "海马 冒烟"
+            )
+            _check(
+                len(doc_only) > 0
+                and all(
+                    d.metadata.get("document_id") == online_doc.id for d in doc_only
+                ),
+                "⑮ 纯文档范围仅命中指定文档",
+            )
+
+            # SSE 协议：fake 网关零 LLM，事件序列与 multi_kb 链对齐（strategy=multi_scope）
+            original_get_llm_15 = chat_service.get_llm
+            chat_service.get_llm = (  # type: ignore[assignment]
+                lambda *a, **k: FakeListChatModel(responses=["多范围链路OK"])
+            )
+            try:
+                scope_events = []
+                async for ev in chat_service.multi_scope_rag_stream(
+                    [temp_kb3.id], {temp_kb.id: [online_doc.id]}, "海马 萤火虫"
+                ):
+                    scope_events.append(ev)
+            finally:
+                chat_service.get_llm = original_get_llm_15  # type: ignore[assignment]
+            _check(
+                scope_events[0]["type"] == "retrieval_debug"
+                and scope_events[-1]["type"] == "done",
+                "⑮ SSE 首=retrieval_debug、尾=done（协议对齐 multi_kb）",
+            )
+            _check(
+                scope_events[0]["content"]["strategy"] == "multi_scope",
+                "⑮ retrieval_debug.strategy=multi_scope",
+            )
+            scope_tokens = [e for e in scope_events if e["type"] == "token"]
+            _check(
+                len(scope_tokens) > 0
+                and "".join(e["content"] for e in scope_tokens) == "多范围链路OK",
+                "⑮ token 事件来自 fake 网关（零 LLM）",
+            )
+            scope_citations = next(
+                e for e in scope_events if e["type"] == "citations"
+            )
+            _check(
+                isinstance(scope_citations["content"], list)
+                and len(scope_citations["content"]) > 0,
+                "⑮ citations 非空",
+            )
+
         finally:
             await kb_service.delete_kb(db, user, temp_kb.id)
             if temp_kb2 is not None:
                 await kb_service.delete_kb(db, user, temp_kb2.id)
                 print(f"✓ 临时库 {temp_kb2.id} 已清理")
+            if temp_kb3 is not None:
+                await kb_service.delete_kb(db, user, temp_kb3.id)
+                print(f"✓ 临时库 {temp_kb3.id} 已清理")
             print(f"✓ 临时库 {temp_kb.id} 已清理")
 
     print("\n🎉 P0-4 冒烟全绿（零 LLM 调用，全部检索层/DB 层断言）")

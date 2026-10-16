@@ -4,7 +4,6 @@ import {
   Button,
   Typography,
   Spin,
-  Avatar,
   Tooltip,
   Space,
   Select,
@@ -16,7 +15,6 @@ import {
 import {
   SendOutlined,
   RobotOutlined,
-  UserOutlined,
   StopOutlined,
   ExperimentOutlined,
   SmileOutlined,
@@ -37,7 +35,10 @@ import CitationView, { type CitationClickInfo } from "../CitationView";
 import RetrievalDebugPanel from "../RetrievalDebugPanel";
 import AgentToolLog from "../AgentToolLog";
 import { buildCategorySelectTree } from "../CategoryTree";
-import InputPlusPopover, { type InputSourceValue } from "../InputPlusPopover";
+import InputPlusPopover, {
+  derivePlaceholder,
+  type InputSourceValue,
+} from "../InputPlusPopover";
 import {
   chatApi,
   knowledgeBaseApi,
@@ -92,10 +93,11 @@ export default function ChatWindow({
   const [useHyde, setUseHyde] = useState(false);
   const [useWebSearch, setUseWebSearch] = useState(false);
   const [useAgentMode, setUseAgentMode] = useState(false); // P0-3a：Agent 模式开关（默认关，实验性入口；P0-4 第二轮入口移入「+」弹层）
-  // P0-4 第四轮（T3）：信息源状态收敛为 InputSourceValue（当前文档与库互斥；勾选为空 = 纯直聊）
+  // P0-4 第四轮（T3）：信息源状态收敛为 InputSourceValue；第五轮（T6）扩展 docIds（文档级多选）
   const [source, setSource] = useState<InputSourceValue>({
     docSelected: false,
     kbIds: knowledgeBaseId ? [knowledgeBaseId] : [],
+    docIds: [],
   });
   // 知识库列表（供信息源 tags 显示库名；打开弹层时刷新）
   const [allKbs, setAllKbs] = useState<KnowledgeBase[]>([]);
@@ -158,7 +160,8 @@ export default function ChatWindow({
     window.dispatchEvent(new CustomEvent("p04:conv-list-changed"));
   }, [sse.conversationId]);
 
-  // P0-4 v1.2：监听侧栏历史列表联动（切换会话 / 删除的正是当前打开的会话）
+  // P0-4 v1.2：监听侧栏历史列表联动（切换会话 / 删除的正是当前打开的会话）；
+  // P0-4 第五轮（T2）：新建对话入口移侧栏（p04:conv-new），清空消息开新会话
   useEffect(() => {
     const onSwitch = (e: Event) =>
       switchConversation((e as CustomEvent<number>).detail);
@@ -169,11 +172,17 @@ export default function ChatWindow({
         sse.setConversationId(null);
       }
     };
+    const onNewConv = () => {
+      setMessages([]);
+      sse.setConversationId(null);
+    };
     window.addEventListener("p04:conv-switch", onSwitch);
     window.addEventListener("p04:conv-deleted", onDeleted);
+    window.addEventListener("p04:conv-new", onNewConv);
     return () => {
       window.removeEventListener("p04:conv-switch", onSwitch);
       window.removeEventListener("p04:conv-deleted", onDeleted);
+      window.removeEventListener("p04:conv-new", onNewConv);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sse.conversationId]);
@@ -193,8 +202,8 @@ export default function ChatWindow({
 
   useEffect(() => {
     setMessages([]);
-    // P0-4 第四轮：切换知识库时信息源重置为当前库
-    setSource({ docSelected: false, kbIds: knowledgeBaseId ? [knowledgeBaseId] : [] });
+    // P0-4 第五轮：切换知识库时信息源重置为当前库（docIds 一并清空）
+    setSource({ docSelected: false, kbIds: knowledgeBaseId ? [knowledgeBaseId] : [], docIds: [] });
 
     const loadHistory = async () => {
       setHistoryLoading(true);
@@ -322,12 +331,14 @@ export default function ChatWindow({
     ]);
 
     await sse.send({
-      // P0-4 第二轮：会话挂主信息源（第一个选中库）；Agent 模式仅作用主信息源（不传 ids）
+      // P0-4 第五轮（T6）：会话挂主信息源（首个选中库；纯文档范围时后端取文档组首库）；
+      // docIds 非空走多范围合并链（document_ids，落会话）；Agent 模式仅作用主信息源（不传 ids）
       knowledgeBaseId: primaryKbId,
-      knowledgeBaseIds: !useAgentMode && isMultiKb ? source.kbIds : undefined,
+      knowledgeBaseIds: !useAgentMode && source.kbIds.length > 1 ? source.kbIds : undefined,
+      documentIds: !useAgentMode && source.docIds.length > 0 ? source.docIds : undefined,
       question,
       conversationId: sse.conversationId ?? undefined,
-      useHyde: isMultiKb ? false : useHyde, // 多库合并链不支持 HyDE（需求 §8.3）
+      useHyde: isMultiKb ? false : useHyde, // 多库合并/多范围链不支持 HyDE（需求 §8.3/§11.2）
       images: imagesToSend.length > 0 ? imagesToSend : undefined,
       fileContent: fileToSend?.content,
       fileName: fileToSend?.filename,
@@ -422,9 +433,9 @@ export default function ChatWindow({
     }
   };
 
-  // P0-4 第四轮：信息源语义（勾选为空 = 纯直聊/原普通聊天；主聊天窗无文档信息源）
-  const isPlainChat = source.kbIds.length === 0;
-  const isMultiKb = source.kbIds.length > 1;
+  // P0-4 第五轮：信息源语义（全空 = 纯直聊；多范围 = 多库或文档级多选，走合并链）
+  const isPlainChat = source.kbIds.length === 0 && source.docIds.length === 0;
+  const isMultiKb = source.kbIds.length > 1 || source.docIds.length > 0;
   const primaryKbId = source.kbIds[0] ?? null;
   // 乐享式空态：无消息且非加载中 → 欢迎页（隐藏顶栏与消息流空态）
   const isEmptyHome = messages.length === 0 && !sse.loading && !historyLoading;
@@ -439,19 +450,6 @@ export default function ChatWindow({
             {knowledgeBaseName || "问AI"}
           </Typography.Title>
           <Space>
-            <Tooltip title="新建对话（清除上下文，节省 Token）">
-              <Button
-                icon={<PlusOutlined />}
-                size="small"
-                onClick={() => {
-                  setMessages([]);
-                  sse.setConversationId(null);
-                }}
-                disabled={sse.loading || messages.length === 0}
-              >
-                新对话
-              </Button>
-            </Tooltip>
             {!isPlainChat && !isMultiKb && (
               <Tooltip title="显示检索调试信息">
                 <Button
@@ -473,106 +471,92 @@ export default function ChatWindow({
             <div className={styles.emptyTitle}>今天从哪里开始?</div>
           </div>
         )}
+        {/* P0-4 第五轮（T4）：乐享式消息形态——用户右侧浅色气泡（无头像）、AI 左侧纯文本（无气泡无头像） */}
         {messages.map((msg, index) => (
           <div key={index} className={`${styles.message} ${styles[msg.role]}`}>
-            <Avatar
-              size="small"
-              icon={msg.role === "user" ? <UserOutlined /> : <RobotOutlined />}
-              style={{
-                backgroundColor: msg.role === "user" ? "#1677ff" : "#52c41a",
-                flexShrink: 0,
-              }}
-            />
-            <div className={styles.bubble}>
-              {msg.role === "assistant" ? (
-                <>
-                  {msg.toolTraces && <AgentToolLog items={msg.toolTraces} compact />}
-                  <div className={styles.markdownContent}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {msg.content}
-                    </ReactMarkdown>
-                  </div>
-                  {msg.citations && (
-                    <CitationView
-                      citations={msg.citations}
-                      onCitationClick={onCitationClick}
-                    />
-                  )}
-                  {showDebug && msg.retrievalDebug && (
-                    <RetrievalDebugPanel
-                      debug={msg.retrievalDebug}
-                      knowledgeBaseId={knowledgeBaseId!}
-                      question={messages[index - 1]?.content || ""}
-                      messageId={index}
-                    />
-                  )}
-                  <div className={styles.assistantFooter}>
-                    <Typography.Text
-                      type="secondary"
-                      className={styles.aiDisclaimer}
-                    >
-                      本回答由 AI 生成，内容仅供参考，请仔细甄别。
-                    </Typography.Text>
-                    <Tooltip title="复制回答">
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<CopyOutlined />}
-                        className={styles.copyBtn}
-                        onClick={() => {
-                          navigator.clipboard.writeText(msg.content);
-                          message.success("已复制到剪贴板");
-                        }}
-                      />
-                    </Tooltip>
-                    <Tooltip title="存为知识库文档">
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<SaveOutlined />}
-                        className={styles.copyBtn}
-                        onClick={() => handleOpenSaveModal(msg.content)}
-                      />
-                    </Tooltip>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <Typography.Text style={{ whiteSpace: "pre-wrap" }}>
+            {msg.role === "assistant" ? (
+              <div className={styles.assistantBody}>
+                {msg.toolTraces && <AgentToolLog items={msg.toolTraces} compact />}
+                <div className={styles.markdownContent}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {msg.content}
+                  </ReactMarkdown>
+                </div>
+                {msg.citations && (
+                  <CitationView
+                    citations={msg.citations}
+                    onCitationClick={onCitationClick}
+                  />
+                )}
+                {showDebug && msg.retrievalDebug && (
+                  <RetrievalDebugPanel
+                    debug={msg.retrievalDebug}
+                    knowledgeBaseId={knowledgeBaseId!}
+                    question={messages[index - 1]?.content || ""}
+                    messageId={index}
+                  />
+                )}
+                <div className={styles.assistantFooter}>
+                  <Typography.Text
+                    type="secondary"
+                    className={styles.aiDisclaimer}
+                  >
+                    本回答由 AI 生成，内容仅供参考，请仔细甄别。
                   </Typography.Text>
-                  {msg.fileName && (
-                    <div className={styles.fileAttachment}>
-                      <PaperClipOutlined style={{ marginRight: 6 }} />
-                      <span>{msg.fileName}</span>
-                    </div>
-                  )}
-                  {msg.images && msg.images.length > 0 && (
-                    <div className={styles.userImageList}>
-                      {msg.images.map((src, imgIdx) => (
-                        <img
-                          key={imgIdx}
-                          src={src}
-                          alt={`user-img-${imgIdx}`}
-                          className={styles.userImage}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+                  <Tooltip title="复制回答">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<CopyOutlined />}
+                      className={styles.copyBtn}
+                      onClick={() => {
+                        navigator.clipboard.writeText(msg.content);
+                        message.success("已复制到剪贴板");
+                      }}
+                    />
+                  </Tooltip>
+                  <Tooltip title="存为知识库文档">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<SaveOutlined />}
+                      className={styles.copyBtn}
+                      onClick={() => handleOpenSaveModal(msg.content)}
+                    />
+                  </Tooltip>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.userBubble}>
+                <Typography.Text style={{ whiteSpace: "pre-wrap" }}>
+                  {msg.content}
+                </Typography.Text>
+                {msg.fileName && (
+                  <div className={styles.fileAttachment}>
+                    <PaperClipOutlined style={{ marginRight: 6 }} />
+                    <span>{msg.fileName}</span>
+                  </div>
+                )}
+                {msg.images && msg.images.length > 0 && (
+                  <div className={styles.userImageList}>
+                    {msg.images.map((src, imgIdx) => (
+                      <img
+                        key={imgIdx}
+                        src={src}
+                        alt={`user-img-${imgIdx}`}
+                        className={styles.userImage}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ))}
-
+        
         {sse.loading && (
           <div className={`${styles.message} ${styles.assistant}`}>
-            <Avatar
-              size="small"
-              icon={<RobotOutlined />}
-              style={{ backgroundColor: "#52c41a", flexShrink: 0 }}
-            />
-            <div className={styles.bubble}>
+            <div className={styles.assistantBody}>
               {sse.toolEvents.length > 0 && (
                 <AgentToolLog items={sse.toolEvents} compact />
               )}
@@ -592,6 +576,8 @@ export default function ChatWindow({
       </div>
 
       <div className={styles.inputArea}>
+        {/* P0-4 第五轮（T5）：圆角输入容器（乐享式：附件预览→tags→无边框输入框→左下「+」右下圆形发送） */}
+        <div className={styles.inputCard}>
         {/* File preview strip */}
         {pendingFile && (
           <div className={styles.filePreviewStrip}>
@@ -625,18 +611,9 @@ export default function ChatWindow({
             ))}
           </div>
         )}
-        {/* P0-4 第四轮（T3）：信息源 tags（乐享式，输入框上方；× 可移除，清空 = 直聊） */}
-        {(source.docSelected || source.kbIds.length > 0) && (
+        {/* P0-4 第五轮（T6）：信息源 tags——库名逐个 + 文档级多选聚合 tag；× 可移除，全清 = 直聊 */}
+        {(source.docSelected || source.kbIds.length > 0 || source.docIds.length > 0) && (
           <div className={styles.inputToolbar} style={{ alignItems: "center" }}>
-            {source.docSelected && (
-              <Tag
-                closable
-                onClose={() => setSource({ ...source, docSelected: false })}
-                style={{ marginRight: 0 }}
-              >
-                <FileTextOutlined /> 当前文档
-              </Tag>
-            )}
             {source.kbIds.map((id) => (
               <Tag
                 key={id}
@@ -653,14 +630,31 @@ export default function ChatWindow({
                     : `知识库${id}`)}
               </Tag>
             ))}
-            {useAgentMode && source.kbIds.length > 1 && (
+            {source.docIds.length > 0 && (
+              <Tag
+                closable
+                onClose={() => setSource({ ...source, docIds: [] })}
+                style={{ marginRight: 0 }}
+              >
+                <FileTextOutlined /> {source.docIds.length} 个文档
+              </Tag>
+            )}
+            {source.docSelected && (
+              <Tag
+                closable
+                onClose={() => setSource({ ...source, docSelected: false })}
+                style={{ marginRight: 0 }}
+              >
+                <FileTextOutlined /> 当前文档
+              </Tag>
+            )}
+            {useAgentMode && isMultiKb && (
               <Typography.Text type="warning" style={{ fontSize: 12 }}>
                 Agent 模式仅检索主信息源
               </Typography.Text>
             )}
           </div>
         )}
-        <div className={styles.inputRow}>
           <Input.TextArea
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
@@ -670,18 +664,14 @@ export default function ChatWindow({
                 handleSend();
               }
             }}
-            placeholder={
-              isPlainChat
-                ? "基于当前知识库进行提问，shift+enter换行"
-                : isMultiKb
-                ? `已选 ${source.kbIds.length} 个信息源，输入问题跨库检索...`
-                : "输入您的问题，按 Enter 发送，Shift+Enter 换行..."
-            }
-            autoSize={{ minRows: 3, maxRows: 6 }}
+            placeholder={derivePlaceholder(source)}
+            autoSize={{ minRows: 2, maxRows: 6 }}
             disabled={sse.loading}
             className={styles.input}
           />
           <div className={styles.inputActions}>
+            {/* P0-4 第五轮（T5）：左下角「+」（弹层）与直聊上传；右下角圆形发送/停止 */}
+            <div className={styles.inputActionsLeft}>
             {/* P0-4 第四轮（T3）：「+」弹层（乐享式公共组件）——模式切换/深度思考/信息源多选 */}
             <InputPlusPopover
               open={composeOpen}
@@ -693,6 +683,7 @@ export default function ChatWindow({
               onAgentModeChange={setUseAgentMode}
               source={source}
               onSourceChange={setSource}
+              activeKbId={knowledgeBaseId}
               useHyde={useHyde}
               onHydeChange={setUseHyde}
               useWebSearch={useWebSearch}
@@ -730,23 +721,26 @@ export default function ChatWindow({
                 </Tooltip>
               </>
             )}
+            </div>
             {sse.loading ? (
-              <Button icon={<StopOutlined />} onClick={sse.abort} danger size="small">
-                停止
-              </Button>
+              <Tooltip title="停止生成">
+                <Button icon={<StopOutlined />} onClick={sse.abort} danger size="small" shape="circle" />
+              </Tooltip>
             ) : (
-              <Button
-                type="primary"
-                icon={<SendOutlined />}
-                onClick={handleSend}
-                disabled={!inputValue.trim()}
-                size="small"
-                shape="circle"
-              />
+              <Tooltip title="发送（Enter）">
+                <Button
+                  type="primary"
+                  icon={<SendOutlined />}
+                  onClick={handleSend}
+                  disabled={!inputValue.trim()}
+                  size="small"
+                  shape="circle"
+                />
+              </Tooltip>
             )}
           </div>
         </div>
-        {/* P0-4 第四轮（T2）：乐享式免责声明 */}
+        {/* P0-4 第四轮（T2）：乐享式免责声明（容器外下方居中） */}
         <Typography.Text
           type="secondary"
           style={{ fontSize: 12, textAlign: "center", display: "block", padding: "4px 0 2px" }}

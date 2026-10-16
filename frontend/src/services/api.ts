@@ -38,6 +38,10 @@ export interface KnowledgeBase {
   updated_at: string;
 }
 
+// P0-4 第五轮（T1）：个人知识库识别锚点（第二轮迁移脚本 DEFAULT_TARGET_NAME 固定产物名，纯 UI 约定：
+// 不提供新建/删除入口，仅重命名+管理；被重命名后视为普通库，强保护需后端内置标记，P1）
+export const PERSONAL_KB_NAME = "个人知识库";
+
 export interface DocumentInfo {
   id: number;
   knowledge_base_id: number;

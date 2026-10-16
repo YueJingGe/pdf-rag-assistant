@@ -25,35 +25,35 @@
   min-height: 0;
 }
 
+/* P0-4 第五轮（T4）：消息流居中限宽 780px，用户右/AI 左（乐享式形态） */
 .message {
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
   display: flex;
-  gap: 10px;
-  max-width: 80%;
 }
 
 .user {
-  align-self: flex-end;
-  flex-direction: row-reverse;
+  justify-content: flex-end;
 }
 
 .assistant {
-  align-self: flex-start;
+  justify-content: flex-start;
 }
 
-.bubble {
+/* 用户消息：右侧浅蓝气泡（无头像） */
+.userBubble {
+  max-width: 70%;
   padding: 10px 14px;
   border-radius: 12px;
-  background: #f5f5f5;
+  background: #e8f3ff;
   line-height: 1.6;
 }
 
-.user .bubble {
-  background: #e6f4ff;
-}
-
-.assistant .bubble {
-  border: 1px solid #e8e8e8;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+/* AI 消息：左侧纯文本（无气泡无头像） */
+.assistantBody {
+  width: 100%;
+  line-height: 1.7;
 }
 
 .assistantFooter {
@@ -122,24 +122,48 @@
   }
 }
 
-.inputRow {
+/* P0-4 第五轮（T5）：圆角输入容器（乐享式：附件预览→tags→无边框输入框→左下「+」右下圆形发送） */
+.inputCard {
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 16px;
+  padding: 8px 12px 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   display: flex;
-  gap: 10px;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 4px;
+
+  &:focus-within {
+    border-color: #1677ff;
+  }
 }
 
 .inputActions {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.fileActions {
+.inputActionsLeft {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
 }
+
 .input {
-  flex: 1;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  padding: 4px 6px;
+  font-size: 14px;
+  resize: none;
+
+  &:focus {
+    box-shadow: none;
+  }
 }
 
 .empty {
@@ -263,7 +287,7 @@
 }
 
 .filePreviewStrip {
-  padding: 8px 12px 0;
+  padding: 2px 0 0;
 }
 
 .filePreviewItem {

@@ -1,9 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Avatar, Button, Empty, Input, Tag, Tooltip, Typography } from "antd";
+import { Button, Empty, Input, Spin, Tag, Tooltip, Typography } from "antd";
 import {
   SendOutlined,
-  RobotOutlined,
-  UserOutlined,
   StopOutlined,
   PlusOutlined,
   FileTextOutlined,
@@ -12,7 +10,10 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useSSE } from "../../hooks/useSSE";
 import CitationView, { type CitationClickInfo } from "../CitationView";
-import InputPlusPopover, { type InputSourceValue } from "../InputPlusPopover";
+import InputPlusPopover, {
+  derivePlaceholder,
+  type InputSourceValue,
+} from "../InputPlusPopover";
 import type { Citation } from "../../services/api";
 import styles from "./index.module.less";
 
@@ -35,12 +36,16 @@ interface Props {
  * 信息源交互收敛到底部输入区「+」弹层（InputPlusPopover 公共组件，与主聊天同构）——
  * 默认信息源=当前文档（tag 展示），可切全部知识/各知识库（多选），清空=纯直聊。
  * 均走后端轻流式（不落会话，刷新即清）；文档面板仅问答模式（Agent 不进入）。
+ * 第五轮（T4/T5/T7）：消息形态与输入区布局对齐主聊天（用户右气泡/AI 左纯文本、
+ * 圆角输入容器 + 左下「+」右下圆形发送）；placeholder 用 derivePlaceholder 统一四态；
+ * 不开放文档级多选（allowDocScope=false，避免轻流式误落会话）。
  */
 export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: Props) {
   // P0-4 第四轮（T6）：信息源状态与主聊天同构；打开文档时默认勾选「当前文档」
   const [source, setSource] = useState<InputSourceValue>({
     docSelected: true,
     kbIds: [],
+    docIds: [],
   });
   const [useHyde, setUseHyde] = useState(false);
   const [useWebSearch, setUseWebSearch] = useState(false);
@@ -58,7 +63,7 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
   useEffect(() => {
     setMessages([]);
     sse.setConversationId(null);
-    setSource({ docSelected: true, kbIds: [] });
+    setSource({ docSelected: true, kbIds: [], docIds: [] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId]);
 
@@ -123,45 +128,39 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
             style={{ marginTop: 48 }}
           />
         )}
+        {/* P0-4 第五轮（T4）：与主聊天同款消息形态——用户右侧气泡、AI 左侧纯文本 */}
         {messages.map((msg, idx) => (
           <div key={idx} className={`${styles.message} ${styles[msg.role]}`}>
-            <Avatar
-              size="small"
-              icon={msg.role === "user" ? <UserOutlined /> : <RobotOutlined />}
-              style={{
-                backgroundColor: msg.role === "user" ? "#1677ff" : "#52c41a",
-                flexShrink: 0,
-              }}
-            />
-            <div className={styles.bubble}>
-              <div className={styles.markdownContent}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+            {msg.role === "assistant" ? (
+              <div className={styles.assistantBody}>
+                <div className={styles.markdownContent}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                </div>
+                {msg.citations && (
+                  <CitationView
+                    citations={msg.citations}
+                    onCitationClick={onCitationClick}
+                  />
+                )}
               </div>
-              {msg.citations && (
-                <CitationView
-                  citations={msg.citations}
-                  onCitationClick={onCitationClick}
-                />
-              )}
-            </div>
+            ) : (
+              <div className={styles.userBubble}>
+                <Typography.Text style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
+                  {msg.content}
+                </Typography.Text>
+              </div>
+            )}
           </div>
         ))}
         {sse.loading && (
           <div className={`${styles.message} ${styles.assistant}`}>
-            <Avatar
-              size="small"
-              icon={<RobotOutlined />}
-              style={{ backgroundColor: "#52c41a", flexShrink: 0 }}
-            />
-            <div className={styles.bubble}>
+            <div className={styles.assistantBody}>
               {sse.content ? (
                 <div className={styles.markdownContent}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{sse.content}</ReactMarkdown>
                 </div>
               ) : (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  检索中…
-                </Typography.Text>
+                <Spin size="small" />
               )}
             </div>
           </div>
@@ -170,6 +169,8 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
       </div>
 
       <div className={styles.inputArea}>
+        {/* P0-4 第五轮（T5）：圆角输入容器（与主聊天同款：tags→无边框输入→左下「+」右下圆形发送） */}
+        <div className={styles.inputCard}>
         {/* P0-4 第四轮（T6）：信息源 tags（默认当前文档；× 可移除，清空=直聊） */}
         {(source.docSelected || source.kbIds.length > 0) && (
           <div className={styles.sourceTags}>
@@ -196,28 +197,23 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
             ))}
           </div>
         )}
-        <div className={styles.inputRow}>
-          <Input.TextArea
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onPressEnter={(e) => {
-              if (!e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            placeholder={
-              source.docSelected
-                ? "针对当前文档提问…"
-                : source.kbIds.length > 0
-                ? "跨所选知识范围提问…"
-                : "直聊模式，输入问题…"
+        <Input.TextArea
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onPressEnter={(e) => {
+            if (!e.shiftKey) {
+              e.preventDefault();
+              handleSend();
             }
-            autoSize={{ minRows: 1, maxRows: 4 }}
-            disabled={sse.loading}
-            className={styles.input}
-          />
-          <div className={styles.inputActions}>
+          }}
+          placeholder={derivePlaceholder(source)}
+          autoSize={{ minRows: 2, maxRows: 6 }}
+          disabled={sse.loading}
+          className={styles.input}
+        />
+        <div className={styles.inputActions}>
+          {/* 左下角「+」（信息源/深度思考）；DocChatPanel 不开放文档级多选（allowDocScope=false） */}
+          <div className={styles.inputActionsLeft}>
             <InputPlusPopover
               open={composeOpen}
               onOpenChange={setComposeOpen}
@@ -227,6 +223,7 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
               source={source}
               onSourceChange={setSource}
               activeDoc={{ id: docId, name: docName }}
+              allowDocScope={false}
               useHyde={useHyde}
               onHydeChange={setUseHyde}
               useWebSearch={useWebSearch}
@@ -236,11 +233,13 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
                 <Button icon={<PlusOutlined />} size="small" type="text" disabled={sse.loading} />
               </Tooltip>
             </InputPlusPopover>
-            {sse.loading ? (
-              <Tooltip title="停止">
-                <Button icon={<StopOutlined />} danger size="small" onClick={sse.abort} />
-              </Tooltip>
-            ) : (
+          </div>
+          {sse.loading ? (
+            <Tooltip title="停止生成">
+              <Button icon={<StopOutlined />} danger size="small" shape="circle" onClick={sse.abort} />
+            </Tooltip>
+          ) : (
+            <Tooltip title="发送（Enter）">
               <Button
                 type="primary"
                 icon={<SendOutlined />}
@@ -249,8 +248,9 @@ export default function DocChatPanel({ kbId, docId, docName, onCitationClick }: 
                 disabled={!inputValue.trim()}
                 onClick={handleSend}
               />
-            )}
-          </div>
+            </Tooltip>
+          )}
+        </div>
         </div>
         <Typography.Text
           type="secondary"

@@ -27,6 +27,7 @@ import {
   ToolOutlined,
   HistoryOutlined,
   BarChartOutlined,
+  RightOutlined,
 } from "@ant-design/icons";
 import CategoryTree, { type OpenableDoc } from "../CategoryTree";
 import {
@@ -61,11 +62,14 @@ interface Props {
 }
 
 /**
- * P0-4 乐享式左侧导航（第四轮 v1.3 修订）：
- * 库切换器（仅列知识库，「普通聊天」选项移除=问答模式清空信息源）→ 导航（问AI / 知识地图(P1) / 主页(P1) / 检索调优(admin)）→
- * 历史对话列表（常驻侧栏，随选中库拉取；kb=0 旧普通聊天会话不可见，迁移 P1）→
+ * P0-4 乐享式左侧导航（第五轮 v1.4 修订）：
+ * 库切换器（仅列知识库）→ 新建对话按钮（问AI 上方，对齐乐享）→ 导航（问AI / 知识地图(P1) / 主页(P1) / 检索调优(admin)）→
+ * 历史对话列表（默认收起，标题箭头展开；kb=0 旧普通聊天会话不可见，迁移 P1）→
  * 目录树（新建/上传收拢到目录树「目录」行与节点「···」菜单内；打开文档选中态高亮）→ 底部用户卡。
+ * 个人知识库保护（T1）：不提供新建/删除知识库入口，仅保留重命名+管理
+ * （识别锚点 name==='个人知识库'，迁移脚本 DEFAULT_TARGET_NAME；管理页删除按钮同步隐藏）。
  * 跨组件联动走轻量 CustomEvent 总线：
+ * - p04:conv-new     侧栏 → 聊天窗：新建对话（清空消息开新会话，第五轮 T2）
  * - p04:conv-switch   侧栏 → 聊天窗：切换会话
  * - p04:conv-active   聊天窗 → 侧栏：当前活跃会话高亮
  * - p04:conv-list-changed 聊天窗 → 侧栏：会话列表变化（新建/首条消息落库）需刷新
@@ -91,15 +95,15 @@ export default function KnowledgeBaseSidebar({
   const navigate = useNavigate();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
   const [renameModalOpen, setRenameModalOpen] = useState(false);
   const [renamingKb, setRenamingKb] = useState<KnowledgeBase | null>(null);
-  const [form] = Form.useForm();
   const [renameForm] = Form.useForm();
 
   // P0-4 v1.2：历史对话列表（常驻侧栏，随选中库拉取；普通聊天用 kb_id=0）
   const [conversations, setConversations] = useState<ConversationInfo[]>([]);
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
+  // P0-4 第五轮（T3）：历史对话默认收起，标题箭头展开
+  const [historyCollapsed, setHistoryCollapsed] = useState(true);
 
   const fetchList = async () => {
     setLoading(true);
@@ -150,20 +154,10 @@ export default function KnowledgeBaseSidebar({
 
   const current = knowledgeBases.find((kb) => kb.id === selectedId) ?? null;
 
-  const handleCreate = async () => {
-    const values = await form.validateFields();
-    await knowledgeBaseApi.create(values);
-    message.success("知识库创建成功");
-    setModalOpen(false);
-    form.resetFields();
-    await fetchList();
-  };
-
-  const handleDelete = async (id: number) => {
-    await knowledgeBaseApi.delete(id);
-    message.success("知识库已删除");
-    if (selectedId === id) onSelect(null);
-    await fetchList();
+  // P0-4 第五轮（T2）：新建对话入口（问AI 上方，对齐乐享）——通知聊天窗清空开新会话
+  const handleNewConversation = () => {
+    window.dispatchEvent(new CustomEvent("p04:conv-new"));
+    onGoChat();
   };
 
   const handleRename = async () => {
@@ -198,7 +192,7 @@ export default function KnowledgeBaseSidebar({
 
   return (
     <div className={styles.sidebar}>
-      {/* 顶部：库切换器 + 新建 + 管理 */}
+      {/* 顶部：库切换器 + 管理（第五轮 T1：个人知识库不可新建/删除，仅重命名+管理） */}
       <div className={styles.kbSwitcher}>
         {/* P0-4 第四轮（T4）：仅列知识库，左上角始终显示库名（普通聊天=问答模式清空信息源） */}
         <Select
@@ -210,9 +204,6 @@ export default function KnowledgeBaseSidebar({
           onChange={(v) => onSelect(knowledgeBases.find((kb) => kb.id === v) ?? null)}
           options={knowledgeBases.map((kb) => ({ value: kb.id, label: kb.name }))}
         />
-        <Tooltip title="新建知识库">
-          <Button size="small" icon={<PlusOutlined />} onClick={() => setModalOpen(true)} />
-        </Tooltip>
         {current && (
           <Dropdown
             trigger={["hover"]}
@@ -220,31 +211,28 @@ export default function KnowledgeBaseSidebar({
               items: [
                 { key: "manage", label: "管理", icon: <ToolOutlined /> },
                 { key: "rename", label: "重命名知识库", icon: <EditOutlined /> },
-                {
-                  key: "delete",
-                  label: "删除知识库",
-                  icon: <DeleteOutlined />,
-                  danger: true,
-                },
               ],
               onClick: ({ key }) => {
                 if (key === "manage") navigate(`/spaces/${current.id}`);
                 if (key === "rename") openRenameModal(current);
-                if (key === "delete") {
-                  Modal.confirm({
-                    title: `删除知识库「${current.name}」？`,
-                    content: "将同时删除库内文档与向量索引，不可恢复。",
-                    okText: "删除",
-                    okButtonProps: { danger: true },
-                    onOk: () => handleDelete(current.id),
-                  });
-                }
               },
             }}
           >
             <Button size="small" icon={<SettingOutlined />} />
           </Dropdown>
         )}
+      </div>
+
+      {/* P0-4 第五轮（T2）：新建对话按钮（问AI 上方，对齐乐享） */}
+      <div className={styles.nav}>
+        <Button
+          block
+          icon={<PlusOutlined />}
+          className={styles.newConvBtn}
+          onClick={handleNewConversation}
+        >
+          新建对话
+        </Button>
       </div>
 
       {/* 导航项 */}
@@ -276,17 +264,25 @@ export default function KnowledgeBaseSidebar({
         )}
       </div>
 
-      {/* P0-4 v1.2：历史对话列表（常驻侧栏；点击切换会话，hover 删除） */}
+      {/* P0-4 v1.2：历史对话列表；第五轮 T3 默认收起，标题箭头展开 */}
       <div className={styles.historyBlock}>
-        <div className={styles.historyTitle}>
+        <div
+          className={styles.historyTitle}
+          onClick={() => setHistoryCollapsed((v) => !v)}
+          role="button"
+        >
+          <RightOutlined
+            className={`${styles.historyCaret} ${historyCollapsed ? "" : styles.historyCaretOpen}`}
+          />
           <HistoryOutlined /> 历史对话
         </div>
-        {conversations.length === 0 ? (
-          <Typography.Text type="secondary" className={styles.historyEmpty}>
-            暂无历史对话
-          </Typography.Text>
-        ) : (
-          conversations.map((conv) => (
+        {!historyCollapsed &&
+          (conversations.length === 0 ? (
+            <Typography.Text type="secondary" className={styles.historyEmpty}>
+              暂无历史对话
+            </Typography.Text>
+          ) : (
+            conversations.map((conv) => (
             <div
               key={conv.id}
               className={`${styles.historyItem} ${
@@ -312,7 +308,8 @@ export default function KnowledgeBaseSidebar({
                 />
               </Popconfirm>
             </div>
-          ))
+            ))
+          )
         )}
       </div>
 
@@ -363,27 +360,6 @@ export default function KnowledgeBaseSidebar({
           <Button type="text" size="small" icon={<SettingOutlined />} />
         </Dropdown>
       </div>
-
-      <Modal
-        title="新建知识库"
-        open={modalOpen}
-        onOk={handleCreate}
-        onCancel={() => setModalOpen(false)}
-        destroyOnClose
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="name"
-            label="名称"
-            rules={[{ required: true, message: "请输入知识库名称" }]}
-          >
-            <Input placeholder="例如：产品手册" />
-          </Form.Item>
-          <Form.Item name="description" label="描述">
-            <Input.TextArea placeholder="可选描述" rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
 
       <Modal
         title="重命名知识库"

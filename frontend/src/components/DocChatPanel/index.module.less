@@ -22,23 +22,33 @@
   padding: 12px;
 }
 
+/* P0-4 第五轮（T4）：与主聊天同款消息形态——用户右侧气泡、AI 左侧纯文本 */
 .message {
   display: flex;
-  gap: 8px;
   margin-bottom: 12px;
 }
 
-.bubble {
-  flex: 1;
-  min-width: 0;
-  background: #fafafa;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 12px;
+.user {
+  justify-content: flex-end;
 }
 
-.user .bubble {
-  background: #e6f4ff;
+.assistant {
+  justify-content: flex-start;
+}
+
+.userBubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: #e8f3ff;
+  line-height: 1.6;
+}
+
+.assistantBody {
+  width: 100%;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .markdownContent {
@@ -91,19 +101,43 @@
   padding-bottom: 6px;
 }
 
-.inputRow {
+/* P0-4 第五轮（T5）：圆角输入容器（与主聊天同款，窄面板尺寸缩小） */
+.inputCard {
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 12px;
+  padding: 6px 10px 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   display: flex;
-  gap: 4px;
-  align-items: flex-end;
-  flex-shrink: 0;
+  flex-direction: column;
+  gap: 2px;
+
+  &:focus-within {
+    border-color: #1677ff;
+  }
 }
 
 .inputActions {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 2px;
+}
+
+.inputActionsLeft {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .input {
-  flex: 1;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  padding: 4px 6px;
+  font-size: 13px;
+  resize: none;
+
+  &:focus {
+    box-shadow: none;
+  }
 }

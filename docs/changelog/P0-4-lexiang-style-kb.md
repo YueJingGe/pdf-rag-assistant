@@ -1,6 +1,75 @@
 # P0-4 乐享式知识库最小 demo — changelog
 
-> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8；v1.2 增补第三轮 §9；v1.3 增补第四轮 §10）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）/ `0b76011`（第三轮）/ `39745f9`（第四轮）
+> 需求文档：docs/requirements/P0-4-lexiang-style-kb.md（状态：已确认 2026-10-15；v1.1 增补第二轮 §8；v1.2 增补第三轮 §9；v1.3 增补第四轮 §10；v1.4 增补第五轮 §11）｜基线 commit：`ba6837d`（第一轮）/ `af72e3d`（第二轮，docs(p0-4): 需求文档 v1.1）/ `0b76011`（第三轮）/ `39745f9`（第四轮）/ `5db38d1`（第五轮）
+
+## 第五轮：UI 还原乐享 + 信息源文档级多选（2026-10-16）
+
+按需求 §11（v1.4）实施：基线 commit `5db38d1` → T6 后端多范围链（document_ids + resolve_doc_scopes + multi_scope_retrieve/stream，冒烟⑮）→ T6 前端两栏信息源选择器 → T1 个人库保护（移除新建/删除入口）→ T2/T3 侧栏（新建对话上移 + 历史折叠）→ T4 消息形态（用户右气泡/AI 左纯文本）→ T5 圆角输入容器（+左下/发送右下）→ T7 placeholder 四态。**后端仅非禁区增量（chat.py/chat_service.py），RAG 禁区五文件 diff 为空，全程零新增 LLM 调用。**
+
+### 改动文件清单
+
+**后端（T6 多范围合并链，非禁区）**
+
+| 文件 | 改动 |
+|---|---|
+| `backend/app/services/chat_service.py` | 尾部追加 115 行：`MAX_SCOPE_DOCS=20`；`resolve_doc_scopes`（文档 id 按库分组 + 逐文档 404/403 权限校验）；`multi_scope_retrieve`（同库整库优先、每库一次 `retrieve_with_strategy(use_hyde=False)`、文档组按 metadata.document_id 后过滤、RRF 合并去重截断 top_k）；`multi_scope_rag_stream`（SSE 协议对齐 multi_kb，strategy="multi_scope"，不走 HyDE/语义缓存） |
+| `backend/app/api/chat.py` | ChatRequest 加 `document_ids: list[int] \| None`；路由判定链扩展（scope_doc_ids → resolve → doc_scopes → scope_primary，纯文档范围取首库挂会话）；`_chat_sse_events` 加 doc_scopes 参数（分支顺序：doc_scopes > multi_kb > 单库） |
+
+**前端（T1-T5/T7 UI 还原 + T6 两栏弹层）**
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/InputPlusPopover/` | 重写（494 行 + less 289 行）：InputSourceValue 扩展 docIds；导出 MAX_SCOPE_DOCS/derivePlaceholder；两栏模式（左 kbPane：Checkbox 整库勾选+头像块+「当前」badge+箭头；右 treePane：antd Tree checkable，cat-*/doc-* key，目录勾选=collectDocIdsUnder 递归展开，跨库保留+上限 20）；allowDocScope=false 回退单列（DocChatPanel） |
+| `frontend/src/components/ChatWindow/` | 消息形态乐享式（去 Avatar：用户右侧 #e8f3ff 气泡、AI 左侧纯文本，消息流 780px 居中限宽）；输入区圆角容器（inputCard 16px radius + 浅边框/阴影，内部附件预览→tags→无边框 TextArea→工具行左「+」右圆形发送/停止均带 Tooltip）；source 加 docIds、tags 行加「N 个文档」聚合 tag；placeholder=derivePlaceholder(source)；顶栏新对话按钮删除（移侧栏）；监听 p04:conv-new |
+| `frontend/src/components/DocChatPanel/` | 同款消息形态+输入区布局；placeholder 换 derivePlaceholder；InputPlusPopover 传 allowDocScope={false}（轻流式不落会话约束，不引入文档级多选） |
+| `frontend/src/components/KnowledgeBaseSidebar/` | 删「+新建知识库」按钮与「删除知识库」菜单项（个人库保护 T1）；nav 区顶部新建对话按钮（dispatch p04:conv-new，T2）；历史对话默认收起+箭头旋转展开（T3） |
+| `frontend/src/pages/SpacesPage/` | 删除按钮包 `kb.name !== PERSONAL_KB_NAME` 条件（个人库保护） |
+| `frontend/src/pages/MainPage/` | 删全局 Header（乐享式无顶栏），Layout 解构改 {Sider, Content} |
+| `frontend/src/hooks/useSSE.ts` | SendOptions 加 documentIds（!useAgent 且非空时入 body.document_ids） |
+| `frontend/src/services/api.ts` | 导出 `PERSONAL_KB_NAME = "个人知识库"`（识别锚点 migrate_kb_to_personal.DEFAULT_TARGET_NAME，纯 UI 约定） |
+
+**脚本**
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/smoke_test_p04.py` | 追加⑮多范围信息源测试（128 行）：第三库两文档格局（标记戊/己）、resolve_doc_scopes 分组与 404/403、混合范围检索（命中指定文档+干扰文档隔离+整库候选）、纯文档范围、fake 网关 SSE 协议断言（strategy=multi_scope）、临时库 finally 清理 |
+
+### 关键设计摘要
+
+- **多范围合并链（禁区规避）**：复用第二轮 multi_kb 编排（每库一次检索 + RRF 跨库可比）+ 第三轮 doc_scoped 后过滤，`scoped_kbs = {kb: docs for kb not in kb_ids}`（同库整库优先）；多范围链不走 HyDE/语义缓存（延续 §8.3 约定）
+- **目录勾选 = 前端展开**：chunk metadata 无 category_id，目录级检索过滤需禁区改造列 P1；前端 collectDocIdsUnder 递归展开为文档集合（上限 20，前后端一致）
+- **antd Tree 受控勾选技巧**：checkedKeys 只传 doc-*，目录全/半选态由 antd 按子节点自动推导，无需手算 indeterminate
+- **纯文档范围会话挂载**：scope_primary = multi_kb_ids[0] ?? doc_scopes 首库（next(iter)），避免误判 plain chat
+- **个人库保护定位为 UI 约定**：个人知识库（名称锚点「个人知识库」）仅可重命名；后端已有 owner 隔离不做硬封禁（用户确认决策）
+- **derivePlaceholder 四态**：当前文档 > 指定知识（docIds>0 或多库）> 当前知识库 > 直聊；ChatWindow/DocChatPanel 共用
+
+### 验收结果（需求 §11.3 对照）
+
+| # | 验收项 | 结果 |
+|---|---|---|
+| 1 | 个人库不可新建/删除 | ✅ 侧栏无新建库按钮/删除菜单项；SpacesPage 删除按钮对个人库隐藏 |
+| 2 | 新建对话在问AI上方 | ✅ DOM 快照：plus 新建对话按钮位于问AI 导航上方，点击清空开新会话（p04:conv-new） |
+| 3 | 历史对话折叠 | ✅ 默认收起 + right 箭头，点击展开/收起（旋转动画） |
+| 4 | UI 还原乐享 | ✅ 样式计算断言：消息流 780px 居中、userBubble #e8f3ff 右对齐 70%、assistantBody 纯文本、全局无 Header |
+| 5 | +左下/发送右下 | ✅ inputCard 780px/16px 圆角/浅边框阴影；inputActions space-between；发送/停止圆形+Tooltip |
+| 6 | 信息源文档级多选 | ✅ 两栏弹层（kbRow 头像+「当前」badge+箭头；目录树 7 节点勾选→tags「个人知识库+1 个文档」）；冒烟⑮ 15 断言全绿（混合范围命中/隔离/strategy=multi_scope） |
+| 7 | placeholder 区分 | ✅ 单库「基于当前知识库进行提问…」→勾文档后「基于指定知识进行提问…」（实测切换）；四态由 derivePlaceholder 统一 |
+| 8 | 质量门 | ✅ tsc -b 零错误 / py_compile 过 / 禁区五文件 diff 空 / 冒烟全绿（46+15 断言） |
+
+### 遇到的问题
+
+1. **Sidebar JSX 括号闭合错**（历史折叠三元包裹少一个 `)`）：LSP 报「应为)」；中间态缓存导致 GetProblems 二次确认（实际修复后无错）
+2. **less 批量替换第三个 original_text 传空串失败**：nav 系列/historyBlock 类被第一个替换连带删除；重读文件后以 historyTitle 锚点补回
+3. **InputPlusPopover 重写后弹层内 docSummary 与输入区 tags 重复**：删除弹层内概要块，统一由输入区 tags 行渲染
+4. **LSP 编辑中间态假错**（ChatWindow/DocChatPanel source 缺 docIds）：替换已成功执行，GetProblems 复验无错
+5. **f-string 无插值瑕疵**（冒烟⑮）：改普通字符串
+6. **浏览器点击/截图超时**（视口 hidden 环境限制）：改 evaluate_script 在 DOM 层触发 click/mouseover（antd hover Popover 需 mouseover 事件）+ 样式计算断言替代截图
+
+### 遗留事项（P1）
+
+- 目录级检索过滤（chunk metadata 无 category_id）→ 需禁区改造，P1
+- 信息源选择弹层移动端适配/键盘导航未做（桌面优先）
+- 文档级多选上限 20 为前后端各一份常量（产品化配置 P1）
 
 ## 第四轮：主区域单视图 + 问AI 输入区对齐乐享（2026-10-16）
 

@@ -26,6 +26,9 @@ class ChatRequest(BaseModel):
     knowledge_base_ids: list[int] | None = None
     # P0-4 第三轮（T8）：文档级问答（与 knowledge_base_id 同传时切文档级轻流式，不落会话）
     document_id: int | None = None
+    # P0-4 第五轮（T6，§11）：文档级多选（目录勾选=前端展开的文档集合；
+    # 与 knowledge_base_ids 可并存=多范围合并链，落会话）
+    document_ids: list[int] | None = None
     question: str
     conversation_id: int | None = None
     use_hyde: bool = False
@@ -52,7 +55,21 @@ async def chat_stream(
     # P0-4 第二轮：多库信息源判定（len>1 走多库合并链；单库/空路径行为不变）
     multi_kb_ids = [kb for kb in (req.knowledge_base_ids or []) if kb]
     is_multi_kb = len(multi_kb_ids) > 1
-    primary_kb_id = multi_kb_ids[0] if is_multi_kb else req.knowledge_base_id
+    # P0-4 第五轮（T6）：文档级多选 → 多范围合并链（纯文档范围时 kb_ids 可为空）；
+    # 归属解析+逐文档权限校验在 SSE 前完成（403/404 不进事件流）
+    scope_doc_ids = [d for d in (req.document_ids or []) if d]
+    doc_scopes = (
+        await chat_service.resolve_doc_scopes(db, scope_doc_ids, current_user)
+        if scope_doc_ids
+        else None
+    )
+    # 会话主信息源：kbIds[0] → 文档组首库 → 请求体 knowledge_base_id（直聊 kb=0 语义不变）
+    scope_primary = (
+        multi_kb_ids[0]
+        if multi_kb_ids
+        else (next(iter(doc_scopes)) if doc_scopes else req.knowledge_base_id)
+    )
+    primary_kb_id = multi_kb_ids[0] if is_multi_kb else scope_primary
     # Determine if this is a plain chat (no KB) or RAG chat
     is_plain_chat = primary_kb_id is None or primary_kb_id == 0
 
@@ -83,6 +100,7 @@ async def chat_stream(
             is_plain_chat=is_plain_chat,
             primary_kb_id=primary_kb_id,
             multi_kb_ids=multi_kb_ids if is_multi_kb else None,
+            doc_scopes=doc_scopes,
         )
     )
 
@@ -91,11 +109,13 @@ async def _chat_sse_events(
     db: AsyncSession, req: ChatRequest, conversation, chat_history, *,
     is_plain_chat: bool, primary_kb_id: int | None = None,
     multi_kb_ids: list[int] | None = None,
+    doc_scopes: dict[int, list[int]] | None = None,
 ):
     """老端点 SSE 生成器（P0-3a 提取：/stream 与 /agent/stream 的 plain/rag 分支共用）。
 
     P0-4 第二轮：多库信息源（multi_kb_ids len>1）时 rag 分支切换为 service 层多库
     合并链（chunk 协议与 rag_stream 一致）；否则走单库 rag_stream，行为零变化。
+    P0-4 第五轮（T6）：doc_scopes 非空时切多范围合并链（整库+文档组，strategy=multi_scope）。
     """
     full_answer = ""
     citations = []
@@ -118,7 +138,12 @@ async def _chat_sse_events(
             elif chunk["type"] == "done":
                 yield {"event": "done", "data": json.dumps({"content": full_answer})}
     else:
-        if multi_kb_ids and len(multi_kb_ids) > 1:
+        if doc_scopes:
+            # 多范围合并链（第五轮 T6）：整库 + 文档组混合；纯文档范围时 kb_ids 可为空
+            stream = chat_service.multi_scope_rag_stream(
+                multi_kb_ids or [], doc_scopes, req.question, chat_history
+            )
+        elif multi_kb_ids and len(multi_kb_ids) > 1:
             # 多库合并链（service 层方案甲）：不支持 HyDE，chunk 协议与单库一致
             stream = chat_service.multi_kb_rag_stream(
                 multi_kb_ids, req.question, chat_history
